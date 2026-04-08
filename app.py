@@ -377,17 +377,27 @@ def filter_by_language(keywords, target_lang_code):
     keywords_ok = []
     keywords_wrong_lang = []
     
+    # Mots ambigus qui existent dans plusieurs langues (garder toujours)
+    ambiguous_words = {'etf', 'index', 'test', 'bank', 'pension', 'pensions', 'obligation', 'obligations', 
+                       'donation', 'indices', 'apple', 'blackrock', 'morningstar', 'usufruit', 'rallye'}
+    
     for kw in keywords:
+        kw_lower = kw.lower().strip()
+        
+        # Mots ambigus ou noms propres/marques -> garder
+        if kw_lower in ambiguous_words:
+            keywords_ok.append(kw)
+            continue
+            
         try:
             detected = detect(kw)
             # Accepter la langue cible + anglais (souvent utilisé dans le business)
-            # Aussi accepter si détection incertaine (keywords courts)
-            if detected == target_lang_code or detected == 'en' or len(kw.split()) <= 2:
+            if detected == target_lang_code or detected == 'en':
                 keywords_ok.append(kw)
             else:
                 keywords_wrong_lang.append((kw, detected))
         except:
-            # En cas d'erreur de détection, garder le keyword
+            # En cas d'erreur de détection (mot trop court), garder le keyword
             keywords_ok.append(kw)
     
     return keywords_ok, keywords_wrong_lang
@@ -1224,21 +1234,26 @@ with tab1:
                         top_vol = st.session_state.df_master.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
                         st.dataframe(top_vol, use_container_width=True, hide_index=True)
         
-        # ----- ÉTAPE 6 : FILTRAGE -----
-        with st.expander("**6️⃣ Filtrage**"):
-            st.info("📖 **Quoi ?** Supprime les keywords avec volume trop faible + filtrage intelligent basé sur l'analyse du site.\n\n**Pourquoi ?** Nettoyer ta liste pour ne garder que les keywords pertinents.")
+        # ----- ÉTAPE 7 : FILTRAGE -----
+        with st.expander("**Etape 7 - Filtrage**"):
+            st.markdown("""
+            Cette etape nettoie la liste en supprimant les mots-cles non pertinents: 
+            volume trop faible, mauvaise langue, marques concurrentes ou hors-sujet. 
+            Le filtrage par langue utilise une detection automatique pour identifier 
+            les mots-cles dans la mauvaise langue.
+            """)
             
             # --- FILTRAGE PAR VOLUME (principal) ---
-            st.markdown("### 📊 Filtrage par volume")
+            st.markdown("### Filtrage par volume")
             col1, col2 = st.columns(2)
             with col1:
                 min_volume = st.number_input("Volume minimum", value=10, min_value=0, key="min_vol")
             with col2:
                 if 'volume' in st.session_state.df_master.columns:
                     to_remove = (st.session_state.df_master['volume'] < min_volume).sum()
-                    st.metric("À supprimer", to_remove)
+                    st.metric("A supprimer", to_remove)
             
-            if st.button("🗑️ Filtrer par volume", key="btn_filter_vol", use_container_width=True):
+            if st.button("Filtrer par volume", key="btn_filter_vol", use_container_width=True):
                 if 'volume' in st.session_state.df_master.columns:
                     before = len(st.session_state.df_master)
                     removed_kws = st.session_state.df_master[st.session_state.df_master['volume'] < min_volume]['keyword'].tolist()
@@ -1246,25 +1261,25 @@ with tab1:
                         st.session_state.df_master['volume'] >= min_volume
                     ].reset_index(drop=True)
                     removed = before - len(st.session_state.df_master)
-                    st.success(f"✅ {removed} supprimés — Reste: {len(st.session_state.df_master)}")
+                    st.success(f"{removed} supprimes - Reste: {len(st.session_state.df_master)}")
                     
                     if removed > 0:
-                        st.markdown("**📋 Exemples supprimés :**")
+                        st.markdown("**Exemples supprimes:**")
                         st.code('\n'.join(removed_kws[:10]))
             
             st.divider()
             
             # --- ANALYSE DU CONTEXTE BUSINESS ---
-            st.markdown("### 🔍 Analyse du contexte business")
+            st.markdown("### Analyse du contexte business")
             st.caption("Scrape le site avec Jina et extrait le contexte business pour un filtrage intelligent")
             
             # Afficher si kickoff est chargé
             if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
-                st.success(f"📄 Document kickoff chargé ({len(st.session_state.kickoff_content)} caractères)")
+                st.success(f"Document kickoff charge ({len(st.session_state.kickoff_content)} caracteres)")
             else:
-                st.caption("💡 Tu peux ajouter un document kickoff dans la sidebar pour améliorer le filtrage")
+                st.caption("Vous pouvez ajouter un document kickoff dans la sidebar pour ameliorer le filtrage")
             
-            if st.button("🌐 Analyser le site client", key="btn_analyze_site", use_container_width=True):
+            if st.button("Analyser le site client", key="btn_analyze_site", use_container_width=True):
                 progress = st.progress(0, text="Scraping du site avec Jina...")
                 
                 # Scraper le site
@@ -1273,7 +1288,7 @@ with tab1:
                 
                 if not site_content and not st.session_state.get('kickoff_content'):
                     progress.empty()
-                    st.error("❌ Impossible de scraper le site et pas de kickoff")
+                    st.error("Impossible de scraper le site et pas de kickoff")
                 else:
                     progress.progress(50, text="Extraction du contexte business...")
                     
@@ -1291,51 +1306,50 @@ with tab1:
                     progress.empty()
                     
                     if business_context:
-                        st.success("✅ Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
+                        st.success("Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
                     else:
-                        st.warning("⚠️ Contexte non extrait, le filtrage utilisera le contenu brut")
+                        st.warning("Contexte non extrait, le filtrage utilisera le contenu brut")
             
             # Afficher le contexte si disponible
             if 'business_context' in st.session_state and st.session_state.business_context:
                 ctx = st.session_state.business_context
-                with st.expander("📋 Contexte business extrait (cliquer pour voir)", expanded=True):
+                with st.expander("Contexte business extrait", expanded=True):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
                         st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
                         st.markdown("**Produits/Services:**")
                         for item in ctx.get('main_products_services', [])[:5]:
-                            st.caption(f"• {item}")
-                        # Objectifs business (du kickoff)
+                            st.caption(f"- {item}")
                         if ctx.get('business_objectives'):
-                            st.markdown("**🎯 Objectifs business:**")
+                            st.markdown("**Objectifs business:**")
                             for obj in ctx.get('business_objectives', [])[:5]:
-                                st.caption(f"🎯 {obj}")
+                                st.caption(f"- {obj}")
                     with col2:
-                        st.markdown("**Thèmes pertinents:**")
+                        st.markdown("**Themes pertinents:**")
                         for theme in ctx.get('relevant_themes', [])[:8]:
-                            st.caption(f"✅ {theme}")
-                        st.markdown("**Thèmes hors-sujet:**")
+                            st.caption(f"+ {theme}")
+                        st.markdown("**Themes hors-sujet:**")
                         for theme in ctx.get('irrelevant_themes', [])[:5]:
-                            st.caption(f"❌ {theme}")
+                            st.caption(f"- {theme}")
             
             # Afficher le contenu brut scrapé
             if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
-                with st.expander("📄 Contenu brut scrapé par Jina"):
+                with st.expander("Contenu brut scrape par Jina"):
                     st.text(st.session_state.site_content_raw[:3000] + "...")
             
             st.divider()
             
             # --- FILTRAGE PAR LANGUE (programmatique) ---
-            st.markdown("### 🌍 Filtrage par langue")
+            st.markdown("### Filtrage par langue")
             if LANGDETECT_AVAILABLE:
-                st.caption("Détection automatique de la langue avec langdetect (plus fiable que Claude)")
+                st.caption("Detection automatique de la langue avec langdetect")
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("🔍 Analyser les langues", key="btn_analyze_lang", use_container_width=True):
+                    if st.button("Analyser les langues", key="btn_analyze_lang", use_container_width=True):
                         if len(st.session_state.df_master) == 0:
-                            st.warning("Pas de keywords")
+                            st.warning("Pas de mots-cles")
                         else:
                             keywords = st.session_state.df_master['keyword'].tolist()
                             target_lang = st.session_state.language_code  # 'nl' ou 'fr'
@@ -1347,17 +1361,17 @@ with tab1:
                                 'wrong': keywords_wrong
                             }
                             
-                            st.info(f"📋 **Analyse**: {len(keywords_ok)} OK | {len(keywords_wrong)} mauvaise langue détectée")
+                            st.info(f"**Analyse**: {len(keywords_ok)} OK | {len(keywords_wrong)} mauvaise langue detectee")
                             
                             if keywords_wrong:
-                                with st.expander(f"🌍 Mauvaise langue ({len(keywords_wrong)})", expanded=True):
+                                with st.expander(f"Mauvaise langue ({len(keywords_wrong)})", expanded=True):
                                     for kw, detected_lang in keywords_wrong[:50]:
-                                        st.caption(f"❌ `{kw}` → détecté: **{detected_lang}** (cible: {target_lang})")
+                                        st.caption(f"- `{kw}` -> detecte: **{detected_lang}** (cible: {target_lang})")
                 
                 with col2:
-                    if st.button("🗑️ Supprimer mauvaise langue", key="btn_remove_lang", use_container_width=True):
+                    if st.button("Supprimer mauvaise langue", key="btn_remove_lang", use_container_width=True):
                         if 'lang_filter_preview' not in st.session_state:
-                            st.warning("Lance d'abord l'analyse des langues!")
+                            st.warning("Lancez d'abord l'analyse des langues")
                         else:
                             keywords_ok = st.session_state.lang_filter_preview['ok']
                             before = len(st.session_state.df_master)
@@ -1365,19 +1379,19 @@ with tab1:
                                 st.session_state.df_master['keyword'].isin(keywords_ok)
                             ].reset_index(drop=True)
                             removed = before - len(st.session_state.df_master)
-                            st.success(f"✅ {removed} supprimés — Reste: {len(st.session_state.df_master)}")
+                            st.success(f"{removed} supprimes - Reste: {len(st.session_state.df_master)}")
                             del st.session_state.lang_filter_preview
             else:
-                st.warning("⚠️ langdetect non installé. Installe avec: `pip install langdetect`")
+                st.warning("langdetect non installe. Installez avec: pip install langdetect")
             
             st.divider()
             
             # --- FILTRAGE CLAUDE ---
-            st.markdown("### 🧹 Filtrage intelligent (marques, hors-sujet)")
+            st.markdown("### Filtrage intelligent (marques, hors-sujet)")
             
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("👁️ Preview filtrage", key="btn_preview_claude", use_container_width=True):
+                if st.button("Preview filtrage", key="btn_preview_claude", use_container_width=True):
                     if len(st.session_state.df_master) == 0:
                         st.warning("Pas de keywords")
                     elif 'business_context' not in st.session_state:
