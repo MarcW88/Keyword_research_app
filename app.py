@@ -11,20 +11,17 @@ import re
 from io import BytesIO
 import anthropic
 
-# Import secrets
-try:
-    from secrets import DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD, CLAUDE_API_KEY, JINA_API_KEY
-except ImportError:
-    DATAFORSEO_LOGIN = ""
-    DATAFORSEO_PASSWORD = ""
-    CLAUDE_API_KEY = ""
-    JINA_API_KEY = ""
-
 st.set_page_config(
     page_title="Keyword Research",
     page_icon="🔍",
     layout="wide"
 )
+
+# API Keys from Streamlit secrets
+DATAFORSEO_LOGIN = st.secrets.get("DATAFORSEO_LOGIN", "")
+DATAFORSEO_PASSWORD = st.secrets.get("DATAFORSEO_PASSWORD", "")
+CLAUDE_API_KEY = st.secrets.get("CLAUDE_API_KEY", "")
+JINA_API_KEY = st.secrets.get("JINA_API_KEY", "")
 
 # =============================================================================
 # CUSTOM CSS — SEMACTIC STYLE
