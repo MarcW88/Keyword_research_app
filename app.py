@@ -346,30 +346,59 @@ Réponds UNIQUEMENT en JSON: {{"keywords": ["kw1", "kw2", ...]}}"""
         st.error(f"Erreur Claude: {e}")
         return []
 
-def filter_with_claude(keywords, site_domain, language_code, claude_api_key):
-    """Filtre les keywords non pertinents via Claude"""
+def filter_with_claude(keywords, site_domain, language_code, claude_api_key, competitors_list=None):
+    """Filtre les keywords non pertinents via Claude - version améliorée"""
     try:
         client = anthropic.Anthropic(api_key=claude_api_key)
-        kw_list = [{"kw": kw} for kw in keywords[:500]]
+        kw_list = keywords[:500]
         
-        prompt = f"""Expert SEO. Filtre ces keywords pour {site_domain}. Langue cible: {language_code}.
+        # Construire la liste des marques à exclure basée sur les concurrents
+        competitor_brands = []
+        if competitors_list:
+            for comp in competitors_list:
+                # Extraire le nom de marque du domaine (ex: vika.be -> vika)
+                brand = comp.replace('.be', '').replace('.nl', '').replace('.com', '').replace('.fr', '').replace('www.', '')
+                competitor_brands.append(brand)
+        
+        # Langue cible en texte clair
+        lang_name = "néerlandais" if language_code == "nl" else "français"
+        other_lang = "français" if language_code == "nl" else "néerlandais"
+        
+        prompt = f"""Tu es un expert SEO. Tu dois filtrer une liste de keywords pour le site {site_domain}.
 
-Keywords: {json.dumps(kw_list, ensure_ascii=False)}
+CONTEXTE:
+- Langue cible: {lang_name} ({language_code})
+- Le site vend des cuisines sur mesure en Belgique
 
-EXCLURE:
-1. Marques concurrentes (ikea, eggo, dovy, ixina, kvik, cuisinella, schmidt, etc.)
-2. Villes/locations spécifiques
-3. Autres langues que {language_code}
-4. Hors-sujet évident
+LISTE DES KEYWORDS À ANALYSER:
+{json.dumps(kw_list, ensure_ascii=False)}
 
-GARDER: keywords génériques, transactionnels, informationnels SANS marque concurrente.
+MARQUES CONCURRENTES À EXCLURE (extraites des domaines concurrents):
+{json.dumps(competitor_brands, ensure_ascii=False)}
 
-Réponds UNIQUEMENT en JSON:
-{{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitors": ["..."], "locations": ["..."], "other": ["..."]}}}}"""
+RÈGLES DE FILTRAGE - EXCLURE:
+1. **Marques concurrentes**: Tout keyword contenant une marque concurrente listée ci-dessus (ex: "vika keukens", "dovy keuken", "eggo cuisine")
+2. **Grandes marques retail**: ikea, leroy merlin, brico, gamma, hubo, action, aldi, lidl, colruyt
+3. **Marques cuisine connues**: schmidt, cuisinella, mobalpa, hygena, lapeyre, darty, but, conforama, ixina, kvik
+4. **Mauvaise langue**: Keywords en {other_lang} alors que la cible est {lang_name}
+5. **Villes/régions spécifiques**: Keywords avec noms de villes (bruxelles, antwerpen, gent, liège, etc.) SAUF si très génériques
+6. **Hors-sujet évident**: Keywords sans rapport avec les cuisines/intérieur
+
+RÈGLES DE FILTRAGE - GARDER:
+1. Keywords génériques sur les cuisines (keuken, cuisine, aanrecht, werkblad, etc.)
+2. Keywords transactionnels (kopen, bestellen, prijs, prix, acheter)
+3. Keywords informationnels (hoe, wat, welke, comment, quel)
+4. Keywords sur les matériaux, styles, dimensions
+5. Keywords sur l'installation, rénovation, aménagement
+
+IMPORTANT: Sois CONSERVATEUR dans le filtrage. En cas de doute, GARDE le keyword.
+
+Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
+{{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": ["..."], "wrong_language": ["..."], "locations": ["..."], "off_topic": ["..."]}}}}"""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=8000,
+            max_tokens=16000,
             messages=[{"role": "user", "content": prompt}]
         )
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
@@ -897,7 +926,8 @@ with tab1:
                             keywords,
                             st.session_state.site,
                             st.session_state.language_code,
-                            st.session_state.claude_api_key
+                            st.session_state.claude_api_key,
+                            st.session_state.competitors  # Passer la liste des concurrents
                         )
                         progress.progress(100, text="Terminé!")
                         time.sleep(0.3)
@@ -917,9 +947,18 @@ with tab1:
                         # Détails par catégorie
                         if filtered_out:
                             st.markdown("**📋 Filtrés par catégorie :**")
+                            cat_labels = {
+                                'competitor_brands': '🏷️ Marques concurrentes',
+                                'wrong_language': '🌍 Mauvaise langue',
+                                'locations': '📍 Villes/Locations',
+                                'off_topic': '❌ Hors-sujet',
+                                'competitors': '🏷️ Concurrents',
+                                'other': '❓ Autres'
+                            }
                             for cat, items in filtered_out.items():
                                 if items and len(items) > 0:
-                                    st.caption(f"**{cat}** ({len(items)}): {', '.join(items[:5])}{'...' if len(items) > 5 else ''}")
+                                    label = cat_labels.get(cat, cat)
+                                    st.caption(f"**{label}** ({len(items)}): {', '.join(items[:8])}{'...' if len(items) > 8 else ''}")
         
         # ----- ÉTAPE 6b : CATÉGORISATION (E1) -----
         with st.expander("**6️⃣b Catégorisation Claude**"):
