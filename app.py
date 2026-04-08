@@ -820,865 +820,24 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Tabs pour les différents workflows
-tab1, tab2 = st.tabs(["Analyse complete", "Complement"])
+# =============================================================================
+# WORKFLOW PRINCIPAL
+# =============================================================================
+st.markdown("""
+### Analyse de mots-cles
+Suivez les etapes dans l'ordre pour une recherche de mots-cles exhaustive.
+""")
 
-# =============================================================================
-# TAB 1 — ANALYSE COMPLETE (Nouvelle recherche)
-# =============================================================================
-with tab1:
+# ----- CHARGER FICHIER EXISTANT (optionnel) -----
+with st.expander("**Charger une analyse existante (optionnel)**"):
     st.markdown("""
-    ### Analyse complete
-    Suivez les etapes dans l'ordre pour une recherche de mots-cles exhaustive.
+    Si vous avez deja effectue une analyse precedente, vous pouvez charger le fichier Excel 
+    pour continuer le travail. Sinon, passez directement a l'etape 1.
     """)
     
-    if True:  # Config auto-saved, always show steps
-        # ----- ÉTAPE 1 : CONTEXTE BUSINESS -----
-        with st.expander("**Etape 1 - Contexte business**", expanded=True):
-            st.markdown("""
-            Cette etape permet de definir le contexte strategique de l'analyse. 
-            Le systeme scrape le site client pour comprendre son activite, et utilise 
-            le document de kickoff (si fourni) pour identifier les objectifs business 
-            et les thematiques prioritaires. Ce contexte sera utilise pour generer 
-            des thematiques pertinentes et filtrer les mots-cles non pertinents.
-            """)
-            
-            # Afficher si kickoff est chargé
-            if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
-                st.success(f"Document kickoff charge ({len(st.session_state.kickoff_content)} caracteres)")
-            else:
-                st.caption("Vous pouvez ajouter un document kickoff dans la barre laterale pour ameliorer la pertinence de l'analyse.")
-            
-            if st.button("Analyser le contexte business", key="btn_context", use_container_width=True):
-                progress = st.progress(0, text="Scraping du site client...")
-                
-                # Scraper le site
-                site_content = analyze_site_context(st.session_state.site)
-                st.session_state.site_content_raw = site_content
-                
-                if not site_content and not st.session_state.get('kickoff_content'):
-                    progress.empty()
-                    st.error("Impossible de scraper le site et pas de kickoff fourni")
-                else:
-                    progress.progress(50, text="Extraction du contexte business...")
-                    
-                    kickoff = st.session_state.get('kickoff_content', None)
-                    business_context = extract_business_context(
-                        site_content,
-                        st.session_state.site,
-                        st.session_state.claude_api_key,
-                        kickoff
-                    )
-                    st.session_state.business_context = business_context
-                    
-                    progress.progress(100, text="Termine")
-                    progress.empty()
-                    
-                    if business_context:
-                        st.success("Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
-                    else:
-                        st.warning("Contexte non extrait")
-            
-            # Afficher le contexte si disponible
-            if 'business_context' in st.session_state and st.session_state.business_context:
-                ctx = st.session_state.business_context
-                with st.expander("Contexte business extrait", expanded=True):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
-                        st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
-                        st.markdown("**Produits/Services:**")
-                        for item in ctx.get('main_products_services', [])[:5]:
-                            st.caption(f"- {item}")
-                        if ctx.get('business_objectives'):
-                            st.markdown("**Objectifs business:**")
-                            for obj in ctx.get('business_objectives', [])[:5]:
-                                st.caption(f"- {obj}")
-                    with col2:
-                        st.markdown("**Thematiques pertinentes:**")
-                        for theme in ctx.get('relevant_themes', [])[:8]:
-                            st.caption(f"+ {theme}")
-                        st.markdown("**Thematiques hors-sujet:**")
-                        for theme in ctx.get('irrelevant_themes', [])[:5]:
-                            st.caption(f"- {theme}")
-            
-            if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
-                with st.expander("Contenu brut scrape"):
-                    st.text(st.session_state.site_content_raw[:3000] + "...")
-        
-        # ----- ÉTAPE 2 : EXTRACTION SITE -----
-        with st.expander("**Etape 2 - Extraction site client**"):
-            st.markdown("""
-            Cette etape recupere les mots-cles sur lesquels le site client est deja 
-            positionne dans Google. Ces donnees proviennent de l'API DataForSEO Labs 
-            qui analyse l'index Google. C'est la base de l'analyse car elle montre 
-            les positions actuelles du site.
-            """)
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                extract_site_limit = st.number_input("Nombre de mots-cles a extraire", value=100, min_value=10, max_value=1000, key="extract_site",
-                                                      help="Plus ce nombre est eleve, plus vous aurez de donnees mais plus le cout sera important.")
-            with col2:
-                st.metric("Cout estime", f"~{extract_site_limit * 0.002:.2f} EUR")
-            
-            if st.button("Extraire du site client", key="btn_extract_site", use_container_width=True):
-                progress = st.progress(0, text="Connexion a DataForSEO...")
-                progress.progress(30, text=f"Extraction {st.session_state.site}...")
-                
-                kws = extract_keywords_from_site(
-                    st.session_state.site,
-                    st.session_state.dataforseo_login,
-                    st.session_state.dataforseo_password,
-                    st.session_state.location_code,
-                    st.session_state.language_code,
-                    extract_site_limit
-                )
-                progress.progress(100, text="Termine")
-                time.sleep(0.5)
-                progress.empty()
-                
-                if kws:
-                    new_df = pd.DataFrame({'keyword': kws, 'source': 'client_site'})
-                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                    st.success(f"{len(kws)} mots-cles extraits | Total: {len(st.session_state.df_master)}")
-                    
-                    st.markdown("**Apercu (10 premiers):**")
-                    st.dataframe(pd.DataFrame({'keyword': kws[:10]}), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Aucun mot-cle trouve pour ce domaine")
-        
-        # ----- ÉTAPE 3 : EXTRACTION CONCURRENTS -----
-        with st.expander("**Etape 3 - Extraction concurrents**"):
-            st.markdown("""
-            Cette etape recupere les mots-cles sur lesquels les concurrents sont positionnes. 
-            Cela permet de decouvrir des opportunites que le site client n'a pas encore exploitees 
-            et d'identifier les thematiques sur lesquelles les concurrents sont actifs.
-            """)
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                extract_comp_limit = st.number_input("Mots-cles par concurrent", value=100, min_value=10, max_value=500, key="extract_comp",
-                                                      help="Nombre de mots-cles a extraire pour chaque concurrent. Un nombre plus eleve donne plus de donnees mais augmente le cout.")
-                competitors_to_extract = st.multiselect(
-                    "Concurrents a analyser",
-                    options=st.session_state.competitors,
-                    default=st.session_state.competitors
-                )
-            with col2:
-                total_comp = len(competitors_to_extract) * extract_comp_limit
-                st.metric("Mots-cles estimes", f"~{total_comp}")
-                st.metric("Cout estime", f"~{total_comp * 0.002:.2f} EUR")
-            
-            if st.button("Extraire des concurrents", key="btn_extract_comp", use_container_width=True):
-                all_kws = []
-                status = st.empty()
-                progress = st.progress(0)
-                
-                for i, comp in enumerate(competitors_to_extract):
-                    status.text(f"Extraction {comp}...")
-                    kws = extract_keywords_from_site(
-                        comp,
-                        st.session_state.dataforseo_login,
-                        st.session_state.dataforseo_password,
-                        st.session_state.location_code,
-                        st.session_state.language_code,
-                        extract_comp_limit
-                    )
-                    all_kws.extend([{'keyword': kw, 'source': f'competitor:{comp}'} for kw in kws])
-                    progress.progress((i + 1) / len(competitors_to_extract))
-                    time.sleep(0.5)
-                
-                progress.empty()
-                status.empty()
-                
-                if all_kws:
-                    new_df = pd.DataFrame(all_kws)
-                    before = len(st.session_state.df_master)
-                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                    added = len(st.session_state.df_master) - before
-                    st.success(f"{added} nouveaux mots-cles | Total: {len(st.session_state.df_master)}")
-                    
-                    st.markdown("**Apercu par concurrent:**")
-                    preview_df = pd.DataFrame(all_kws)
-                    st.dataframe(preview_df.groupby('source').size().reset_index(name='count'), use_container_width=True, hide_index=True)
-                    st.dataframe(preview_df.head(10), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Aucun mot-cle trouve")
-        
-        # ----- ÉTAPE 4 : THÉMATIQUES PRINCIPALES -----
-        with st.expander("**Etape 4 - Thematiques principales**"):
-            st.markdown("""
-            Cette etape genere les thematiques principales a cibler, basees sur le contexte 
-            business extrait a l'etape 1. Claude analyse le contenu du site, les objectifs 
-            du kickoff, et propose des thematiques strategiques alignees avec les priorites 
-            du client. Ces thematiques serviront de base pour l'expansion des mots-cles.
-            """)
-            
-            if 'business_context' not in st.session_state:
-                st.warning("Lancez d'abord l'etape 1 (Contexte business) pour generer des thematiques pertinentes.")
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                claude_seeds_count = st.number_input("Nombre de thematiques a generer", value=50, min_value=10, max_value=200, key="claude_seeds",
-                                                      help="Nombre de mots-cles thematiques a generer. Ces mots-cles serviront de base pour l'expansion.")
-            with col2:
-                st.metric("Tokens estimes", f"~{claude_seeds_count * 50}")
-            
-            if st.button("Generer les thematiques", key="btn_claude_seeds", use_container_width=True):
-                progress = st.progress(0, text="Récupération contenu du site...")
-                site_url = f"https://www.{st.session_state.site}"
-                site_content = fetch_page_with_jina(site_url)
-                
-                if not site_content:
-                    progress.empty()
-                    st.warning("Impossible de récupérer le contenu du site")
-                else:
-                    progress.progress(30, text="Analyse par Claude...")
-                    existing = st.session_state.df_master['keyword'].tolist() if len(st.session_state.df_master) > 0 else []
-                    
-                    seeds = generate_claude_seeds(
-                        site_content,
-                        existing,
-                        claude_seeds_count,
-                        st.session_state.language_code,
-                        st.session_state.claude_api_key
-                    )
-                    progress.progress(70, text="Validation des volumes...")
-                    
-                    if seeds:
-                        # Valider avec volumes
-                        vol_data = fetch_volumes(
-                            seeds,
-                            st.session_state.dataforseo_login,
-                            st.session_state.dataforseo_password,
-                            st.session_state.location_code,
-                            st.session_state.language_code
-                        )
-                        valid_seeds = [kw for kw in seeds if vol_data.get(kw, {}).get('volume', 0) >= 10]
-                        
-                        progress.progress(100, text="Terminé!")
-                        time.sleep(0.3)
-                        progress.empty()
-                        
-                        if valid_seeds:
-                            # Stocker les volumes déjà récupérés pour éviter un double appel
-                            new_df = pd.DataFrame({
-                                'keyword': valid_seeds, 
-                                'source': 'claude_seeds',
-                                'volume': [vol_data.get(kw, {}).get('volume', 0) for kw in valid_seeds],
-                                'cpc': [vol_data.get(kw, {}).get('cpc', 0.0) for kw in valid_seeds]
-                            })
-                            before = len(st.session_state.df_master)
-                            st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                            added = len(st.session_state.df_master) - before
-                            
-                            st.success(f"{len(seeds)} generes, {len(valid_seeds)} avec volume | {added} nouveaux ajoutes")
-                            st.markdown("**Thematiques generees:**")
-                            st.dataframe(pd.DataFrame({'keyword': valid_seeds[:15]}), use_container_width=True, hide_index=True)
-                        else:
-                            st.warning("Aucune thematique avec volume suffisant")
-                    else:
-                        progress.empty()
-                        st.warning("Claude n'a pas genere de thematiques")
-        
-        # ----- ÉTAPE 5 : EXPANSION RELATED -----
-        with st.expander("**Etape 5 - Expansion (mots-cles lies)**"):
-            st.markdown("""
-            Cette etape elargit la liste en cherchant les mots-cles lies a ceux deja collectes. 
-            Le systeme selectionne les meilleurs mots-cles (par volume et par diversite thematique) 
-            et interroge l'API Google Ads pour trouver des variantes et synonymes recherches par les utilisateurs.
-            """)
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                expansion_top_volume = st.number_input("Top mots-cles par volume", value=50, min_value=10, max_value=200, key="exp_top",
-                                                        help="Nombre de mots-cles a fort volume a utiliser comme base pour l'expansion.")
-            with col2:
-                expansion_per_cluster = st.number_input("Mots-cles par cluster", value=10, min_value=5, max_value=50, key="exp_cluster",
-                                                         help="Nombre de mots-cles a prendre dans chaque groupe thematique pour assurer la diversite.")
-            with col3:
-                related_per_keyword = st.number_input("Lies par mot-cle", value=30, min_value=10, max_value=100, key="related_per",
-                                                       help="Nombre de mots-cles lies a recuperer pour chaque mot-cle de base.")
-            
-            total_seeds = expansion_top_volume + (15 * expansion_per_cluster)
-            st.caption(f"Bases estimees: ~{total_seeds} | Lies estimes: ~{total_seeds * related_per_keyword} | Cout: ~{total_seeds * 0.005:.2f} EUR")
-            
-            if st.button("Lancer l'expansion", key="btn_expansion", use_container_width=True):
-                if len(st.session_state.df_master) == 0:
-                    st.warning("Lancez d'abord l'extraction (etapes 2-4)")
-                elif 'volume' not in st.session_state.df_master.columns:
-                    st.warning("Lancez d'abord l'etape 6 (Volumes) pour avoir les donnees de volume")
-                else:
-                    df_with_vol = st.session_state.df_master[st.session_state.df_master['volume'] > 0].copy()
-                    
-                    if len(df_with_vol) == 0:
-                        st.warning("Pas de keywords avec volume")
-                    else:
-                        # Sélection seeds: top volume + clusters
-                        top_seeds = df_with_vol.nlargest(expansion_top_volume, 'volume')['keyword'].tolist()
-                        
-                        # Clusters par mots communs
-                        clusters = {}
-                        for kw in df_with_vol['keyword'].tolist():
-                            for w in kw.lower().split():
-                                if len(w) > 4:
-                                    clusters.setdefault(w, []).append(kw)
-                        
-                        vol_dict = dict(zip(df_with_vol['keyword'], df_with_vol['volume']))
-                        cluster_seeds = set()
-                        for theme, kws in sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)[:15]:
-                            sorted_kws = sorted(kws, key=lambda k: vol_dict.get(k, 0), reverse=True)
-                            cluster_seeds.update(sorted_kws[:expansion_per_cluster])
-                        
-                        seeds = list(set(top_seeds) | cluster_seeds)
-                        st.info(f"{len(seeds)} mots-cles de base selectionnes (top {expansion_top_volume} + clusters)")
-                        
-                        # Récupérer related
-                        all_related = []
-                        progress = st.progress(0)
-                        status = st.empty()
-                        
-                        for i, seed in enumerate(seeds):
-                            status.text(f"{i+1}/{len(seeds)} - {seed[:30]}...")
-                            related = get_related_keywords(
-                                seed,
-                                st.session_state.dataforseo_login,
-                                st.session_state.dataforseo_password,
-                                st.session_state.location_code,
-                                st.session_state.language_code,
-                                related_per_keyword
-                            )
-                            all_related.extend([r['keyword'] for r in related if r['volume'] >= 10])
-                            progress.progress((i + 1) / len(seeds))
-                            time.sleep(0.3)
-                        
-                        progress.empty()
-                        status.empty()
-                        
-                        unique_related = list(set(all_related))
-                        if unique_related:
-                            new_df = pd.DataFrame({'keyword': unique_related, 'source': 'related'})
-                            before = len(st.session_state.df_master)
-                            st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                            added = len(st.session_state.df_master) - before
-                            
-                            st.success(f"{len(unique_related)} mots-cles lies uniques | {added} nouveaux ajoutes")
-                            st.markdown("**Exemples de mots-cles lies:**")
-                            st.dataframe(pd.DataFrame({'keyword': unique_related[:15]}), use_container_width=True, hide_index=True)
-                        else:
-                            st.warning("Aucun mot-cle lie trouve")
-        
-        # ----- ÉTAPE 6 : VOLUMES -----
-        with st.expander("**Etape 6 - Recuperer les volumes**"):
-            st.markdown("""
-            Cette etape recupere le volume de recherche mensuel et le CPC (cout par clic) pour chaque 
-            mot-cle via l'API Google Ads. Ces donnees permettent de prioriser les mots-cles en fonction 
-            de leur potentiel de trafic reel.
-            """)
-            
-            missing_vol = 0
-            if len(st.session_state.df_master) > 0 and 'volume' in st.session_state.df_master.columns:
-                # Seulement les None, pas les 0 (0 = déjà vérifié, pas de volume)
-                missing_vol = st.session_state.df_master['volume'].isna().sum()
-            else:
-                missing_vol = len(st.session_state.df_master)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Mots-cles sans volume", missing_vol)
-            with col2:
-                st.metric("Cout estime", f"~{missing_vol * 0.005:.2f} EUR")
-            
-            if st.button("Recuperer les volumes", key="btn_volumes", use_container_width=True):
-                if len(st.session_state.df_master) == 0:
-                    st.warning("Pas de keywords — lance d'abord l'extraction")
-                else:
-                    # Identifier les keywords sans volume (nouveaux ou jamais traités)
-                    if 'volume' not in st.session_state.df_master.columns:
-                        st.session_state.df_master['volume'] = None
-                        st.session_state.df_master['cpc'] = None
-                    
-                    # Keywords à traiter = ceux sans volume (None ou jamais défini)
-                    mask_missing = st.session_state.df_master['volume'].isna()
-                    keywords_to_fetch = st.session_state.df_master[mask_missing]['keyword'].tolist()
-                    
-                    if len(keywords_to_fetch) == 0:
-                        st.info("✅ Tous les keywords ont déjà un volume. Rien à récupérer.")
-                    else:
-                        status = st.empty()
-                        status.text(f"📊 Récupération volumes pour {len(keywords_to_fetch)} keywords...")
-                        
-                        vol_data = fetch_volumes(
-                            keywords_to_fetch,
-                            st.session_state.dataforseo_login,
-                            st.session_state.dataforseo_password,
-                            st.session_state.location_code,
-                            st.session_state.language_code
-                        )
-                        
-                        # Mettre à jour uniquement les keywords sans volume
-                        for idx, row in st.session_state.df_master[mask_missing].iterrows():
-                            kw = row['keyword']
-                            st.session_state.df_master.at[idx, 'volume'] = vol_data.get(kw, {}).get('volume', 0)
-                            st.session_state.df_master.at[idx, 'cpc'] = vol_data.get(kw, {}).get('cpc', 0.0)
-                        
-                        status.empty()
-                        
-                        total_vol = st.session_state.df_master['volume'].sum()
-                        with_vol = (st.session_state.df_master['volume'] > 0).sum()
-                        st.success(f"✅ {len(keywords_to_fetch)} volumes récupérés — {with_vol}/{len(st.session_state.df_master)} avec volume | Total: {total_vol:,.0f}")
-                        
-                        # Aperçu top volumes
-                        st.markdown("**📋 Top 10 par volume :**")
-                        top_vol = st.session_state.df_master.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
-                        st.dataframe(top_vol, use_container_width=True, hide_index=True)
-        
-        # ----- ÉTAPE 7 : FILTRAGE -----
-        with st.expander("**Etape 7 - Filtrage**"):
-            st.markdown("""
-            Cette etape nettoie la liste en supprimant les mots-cles non pertinents: 
-            volume trop faible, mauvaise langue, marques concurrentes ou hors-sujet. 
-            Le filtrage par langue utilise une detection automatique pour identifier 
-            les mots-cles dans la mauvaise langue.
-            """)
-            
-            # --- FILTRAGE PAR VOLUME (principal) ---
-            st.markdown("### Filtrage par volume")
-            col1, col2 = st.columns(2)
-            with col1:
-                min_volume = st.number_input("Volume minimum", value=10, min_value=0, key="min_vol")
-            with col2:
-                if 'volume' in st.session_state.df_master.columns:
-                    to_remove = (st.session_state.df_master['volume'] < min_volume).sum()
-                    st.metric("A supprimer", to_remove)
-            
-            if st.button("Filtrer par volume", key="btn_filter_vol", use_container_width=True):
-                if 'volume' in st.session_state.df_master.columns:
-                    before = len(st.session_state.df_master)
-                    removed_kws = st.session_state.df_master[st.session_state.df_master['volume'] < min_volume]['keyword'].tolist()
-                    st.session_state.df_master = st.session_state.df_master[
-                        st.session_state.df_master['volume'] >= min_volume
-                    ].reset_index(drop=True)
-                    removed = before - len(st.session_state.df_master)
-                    st.success(f"{removed} supprimes - Reste: {len(st.session_state.df_master)}")
-                    
-                    if removed > 0:
-                        st.markdown("**Exemples supprimes:**")
-                        st.code('\n'.join(removed_kws[:10]))
-            
-            st.divider()
-            
-            # --- ANALYSE DU CONTEXTE BUSINESS ---
-            st.markdown("### Analyse du contexte business")
-            st.caption("Scrape le site avec Jina et extrait le contexte business pour un filtrage intelligent")
-            
-            # Afficher si kickoff est chargé
-            if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
-                st.success(f"Document kickoff charge ({len(st.session_state.kickoff_content)} caracteres)")
-            else:
-                st.caption("Vous pouvez ajouter un document kickoff dans la sidebar pour ameliorer le filtrage")
-            
-            if st.button("Analyser le site client", key="btn_analyze_site", use_container_width=True):
-                progress = st.progress(0, text="Scraping du site avec Jina...")
-                
-                # Scraper le site
-                site_content = analyze_site_context(st.session_state.site)
-                st.session_state.site_content_raw = site_content
-                
-                if not site_content and not st.session_state.get('kickoff_content'):
-                    progress.empty()
-                    st.error("Impossible de scraper le site et pas de kickoff")
-                else:
-                    progress.progress(50, text="Extraction du contexte business...")
-                    
-                    # Extraire le contexte business (avec kickoff si disponible)
-                    kickoff = st.session_state.get('kickoff_content', None)
-                    business_context = extract_business_context(
-                        site_content,
-                        st.session_state.site,
-                        st.session_state.claude_api_key,
-                        kickoff
-                    )
-                    st.session_state.business_context = business_context
-                    
-                    progress.progress(100, text="Terminé!")
-                    progress.empty()
-                    
-                    if business_context:
-                        st.success("Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
-                    else:
-                        st.warning("Contexte non extrait, le filtrage utilisera le contenu brut")
-            
-            # Afficher le contexte si disponible
-            if 'business_context' in st.session_state and st.session_state.business_context:
-                ctx = st.session_state.business_context
-                with st.expander("Contexte business extrait", expanded=True):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
-                        st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
-                        st.markdown("**Produits/Services:**")
-                        for item in ctx.get('main_products_services', [])[:5]:
-                            st.caption(f"- {item}")
-                        if ctx.get('business_objectives'):
-                            st.markdown("**Objectifs business:**")
-                            for obj in ctx.get('business_objectives', [])[:5]:
-                                st.caption(f"- {obj}")
-                    with col2:
-                        st.markdown("**Themes pertinents:**")
-                        for theme in ctx.get('relevant_themes', [])[:8]:
-                            st.caption(f"+ {theme}")
-                        st.markdown("**Themes hors-sujet:**")
-                        for theme in ctx.get('irrelevant_themes', [])[:5]:
-                            st.caption(f"- {theme}")
-            
-            # Afficher le contenu brut scrapé
-            if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
-                with st.expander("Contenu brut scrape par Jina"):
-                    st.text(st.session_state.site_content_raw[:3000] + "...")
-            
-            st.divider()
-            
-            # --- FILTRAGE PAR LANGUE (programmatique) ---
-            st.markdown("### Filtrage par langue")
-            if LANGDETECT_AVAILABLE:
-                st.caption("Detection automatique de la langue avec langdetect")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Analyser les langues", key="btn_analyze_lang", use_container_width=True):
-                        if len(st.session_state.df_master) == 0:
-                            st.warning("Pas de mots-cles")
-                        else:
-                            keywords = st.session_state.df_master['keyword'].tolist()
-                            target_lang = st.session_state.language_code  # 'nl' ou 'fr'
-                            
-                            keywords_ok, keywords_wrong = filter_by_language(keywords, target_lang)
-                            
-                            st.session_state.lang_filter_preview = {
-                                'ok': keywords_ok,
-                                'wrong': keywords_wrong
-                            }
-                            
-                            st.info(f"**Analyse**: {len(keywords_ok)} OK | {len(keywords_wrong)} mauvaise langue detectee")
-                            
-                            if keywords_wrong:
-                                with st.expander(f"Mauvaise langue ({len(keywords_wrong)})", expanded=True):
-                                    for kw, detected_lang in keywords_wrong[:50]:
-                                        st.caption(f"- `{kw}` -> detecte: **{detected_lang}** (cible: {target_lang})")
-                
-                with col2:
-                    if st.button("Supprimer mauvaise langue", key="btn_remove_lang", use_container_width=True):
-                        if 'lang_filter_preview' not in st.session_state:
-                            st.warning("Lancez d'abord l'analyse des langues")
-                        else:
-                            keywords_ok = st.session_state.lang_filter_preview['ok']
-                            before = len(st.session_state.df_master)
-                            st.session_state.df_master = st.session_state.df_master[
-                                st.session_state.df_master['keyword'].isin(keywords_ok)
-                            ].reset_index(drop=True)
-                            removed = before - len(st.session_state.df_master)
-                            st.success(f"{removed} supprimes - Reste: {len(st.session_state.df_master)}")
-                            del st.session_state.lang_filter_preview
-            else:
-                st.warning("langdetect non installe. Installez avec: pip install langdetect")
-            
-            st.divider()
-            
-            # --- FILTRAGE CLAUDE ---
-            st.markdown("### Filtrage intelligent (marques, hors-sujet)")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Preview filtrage", key="btn_preview_claude", use_container_width=True):
-                    if len(st.session_state.df_master) == 0:
-                        st.warning("Pas de keywords")
-                    elif 'business_context' not in st.session_state:
-                        st.warning("⚠️ Analyse d'abord le site client!")
-                    else:
-                        keywords = st.session_state.df_master['keyword'].tolist()
-                        progress = st.progress(0, text="Filtrage par Claude...")
-                        
-                        # Utiliser le contexte business structuré
-                        ctx = st.session_state.business_context
-                        site_content = st.session_state.get('site_content_raw', '')
-                        
-                        result = filter_with_claude_v2(
-                            keywords,
-                            st.session_state.site,
-                            st.session_state.language_code,
-                            st.session_state.claude_api_key,
-                            st.session_state.competitors,
-                            ctx,
-                            site_content
-                        )
-                        progress.progress(100, text="Terminé!")
-                        progress.empty()
-                        
-                        st.session_state.claude_filter_preview = result
-                        
-                        filtered_out = result.get('filtered_out', {})
-                        relevant = result.get('relevant', [])
-                        total_filtered = len(keywords) - len(relevant)
-                        
-                        st.info(f"📋 **Preview**: {total_filtered} keywords seraient supprimés sur {len(keywords)} | **{len(relevant)} gardés**")
-                        
-                        # Afficher ce qui est GARDÉ
-                        with st.expander(f"✅ Keywords GARDÉS ({len(relevant)})", expanded=True):
-                            st.code('\n'.join(relevant[:100]))
-                            if len(relevant) > 100:
-                                st.caption(f"... et {len(relevant) - 100} autres")
-                        
-                        # Afficher ce qui est filtré par catégorie
-                        cat_labels = {
-                            'competitor_brands': '🏷️ Marques concurrentes',
-                            'wrong_language': '🌍 Mauvaise langue',
-                            'locations': '📍 Villes/Locations',
-                            'off_topic': '❌ Hors-sujet'
-                        }
-                        for cat, items in filtered_out.items():
-                            if items and len(items) > 0:
-                                label = cat_labels.get(cat, cat)
-                                with st.expander(f"{label} ({len(items)})"):
-                                    st.code('\n'.join(items[:50]))
-            
-            with col2:
-                if st.button("✅ Appliquer le filtrage", key="btn_apply_claude", use_container_width=True):
-                    if 'claude_filter_preview' not in st.session_state:
-                        st.warning("Lance d'abord le Preview!")
-                    else:
-                        result = st.session_state.claude_filter_preview
-                        relevant = result.get('relevant', st.session_state.df_master['keyword'].tolist())
-                        
-                        before = len(st.session_state.df_master)
-                        st.session_state.df_master = st.session_state.df_master[
-                            st.session_state.df_master['keyword'].isin(relevant)
-                        ].reset_index(drop=True)
-                        removed = before - len(st.session_state.df_master)
-                        
-                        st.success(f"✅ {removed} filtrés — Reste: {len(st.session_state.df_master)}")
-                        del st.session_state.claude_filter_preview
-        
-        # ----- ÉTAPE 8 : CATÉGORISATION -----
-        with st.expander("**Etape 8 - Categorisation**"):
-            st.markdown("""
-            Cette etape regroupe les mots-cles par categorie thematique. Claude analyse 
-            la liste et propose des regroupements logiques pour organiser le travail 
-            et creer des silos de contenu.
-            """)
-            
-            only_uncategorized = st.checkbox("Uniquement les non-catégorisés", value=True, key="only_uncat")
-            
-            to_categorize = 0
-            if len(st.session_state.df_master) > 0:
-                if only_uncategorized and 'category' in st.session_state.df_master.columns:
-                    to_categorize = st.session_state.df_master['category'].isna().sum() + (st.session_state.df_master['category'] == '').sum()
-                else:
-                    to_categorize = len(st.session_state.df_master)
-            
-            st.metric("Mots-cles a categoriser", to_categorize)
-            
-            if st.button("Categoriser avec Claude", key="btn_categorize", use_container_width=True):
-                if len(st.session_state.df_master) == 0:
-                    st.warning("Pas de keywords")
-                else:
-                    if only_uncategorized and 'category' in st.session_state.df_master.columns:
-                        kws_to_cat = st.session_state.df_master[
-                            st.session_state.df_master['category'].isna() | (st.session_state.df_master['category'] == '')
-                        ]['keyword'].tolist()
-                    else:
-                        kws_to_cat = st.session_state.df_master['keyword'].tolist()
-                    
-                    if not kws_to_cat:
-                        st.success("Tous les mots-cles sont deja categorises")
-                    else:
-                        progress = st.progress(0, text="Catégorisation par Claude...")
-                        
-                        categories = categorize_with_claude(
-                            kws_to_cat,
-                            st.session_state.site,
-                            st.session_state.claude_api_key
-                        )
-                        progress.progress(100, text="Terminé!")
-                        time.sleep(0.3)
-                        progress.empty()
-                        
-                        if categories:
-                            # Construire mapping keyword → category
-                            kw_cat_map = {}
-                            for cat, kws in categories.items():
-                                for kw in kws:
-                                    kw_str = kw if isinstance(kw, str) else kw.get('kw', '')
-                                    kw_cat_map[kw_str.lower()] = cat
-                            
-                            # Appliquer au master
-                            if 'category' not in st.session_state.df_master.columns:
-                                st.session_state.df_master['category'] = ''
-                            
-                            for idx, row in st.session_state.df_master.iterrows():
-                                cat = kw_cat_map.get(row['keyword'].lower())
-                                if cat:
-                                    st.session_state.df_master.at[idx, 'category'] = cat
-                            
-                            categorized = (st.session_state.df_master['category'].notna() & (st.session_state.df_master['category'] != '')).sum()
-                            st.success(f"{categorized}/{len(st.session_state.df_master)} categorises")
-                            
-                            st.markdown("**Categories:**")
-                            for cat, kws in categories.items():
-                                st.caption(f"**{cat}**: {len(kws)} mots-cles")
-                        else:
-                            st.warning("Erreur de categorisation")
-        
-        # ----- ÉTAPE 9 : SERP + AI OVERVIEW -----
-        with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
-            st.markdown("""
-            Cette etape analyse les resultats de recherche Google pour chaque mot-cle. 
-            Elle recupere la position du site client et des concurrents dans les 100 premiers 
-            resultats, et detecte la presence d'AI Overview. Cela permet d'identifier les 
-            opportunites de positionnement et les mots-cles ou l'IA de Google est presente.
-            """)
-            
-            col1, col2, col3 = st.columns(3)
-            
-            # Options SERP
-            force_rescan = st.checkbox("Force rescan (tout rescanner)", value=False, key="force_rescan")
-            
-            # Filtre par catégorie
-            categories_list = []
-            if 'category' in st.session_state.df_master.columns:
-                categories_list = st.session_state.df_master['category'].dropna().unique().tolist()
-            scan_category = st.selectbox("Filtrer par catégorie", [""] + categories_list, key="scan_cat")
-            
-            # Compter keywords sans SERP
-            df_to_scan = st.session_state.df_master.copy()
-            if scan_category:
-                df_to_scan = df_to_scan[df_to_scan['category'] == scan_category]
-            
-            if force_rescan:
-                needs_serp = len(df_to_scan)
-            else:
-                if 'client_pos' in df_to_scan.columns:
-                    needs_serp = df_to_scan['client_pos'].isna().sum()
-                else:
-                    needs_serp = len(df_to_scan)
-            
-            with col1:
-                final_limit = st.number_input("Limite (0 = tous)", value=0, min_value=0, max_value=1000, key="final_limit")
-            with col2:
-                actual_count = needs_serp if final_limit == 0 else min(final_limit, needs_serp)
-                st.metric("Keywords à analyser", actual_count)
-            with col3:
-                st.metric("Cout estime", f"~{actual_count * 0.0075:.2f} EUR")
-                st.caption(f"Duree estimee: ~{actual_count * 1.5 / 60:.0f} min")
-            
-            if st.button("Analyser SERP", key="btn_serp", use_container_width=True):
-                if len(df_to_scan) == 0:
-                    st.warning("Pas de keywords")
-                else:
-                    # Sélectionner les keywords à scanner
-                    if force_rescan:
-                        keywords = df_to_scan['keyword'].tolist()
-                    else:
-                        if 'client_pos' in df_to_scan.columns:
-                            keywords = df_to_scan[df_to_scan['client_pos'].isna()]['keyword'].tolist()
-                        else:
-                            keywords = df_to_scan['keyword'].tolist()
-                    
-                    if final_limit > 0:
-                        keywords = keywords[:final_limit]
-                    
-                    results = []
-                    progress = st.progress(0)
-                    status = st.empty()
-                    
-                    for i, kw in enumerate(keywords):
-                        status.text(f"{i+1}/{len(keywords)} - {kw[:40]}...")
-                        result = analyze_serp(
-                            kw,
-                            st.session_state.dataforseo_login,
-                            st.session_state.dataforseo_password,
-                            st.session_state.location_code,
-                            st.session_state.language_code,
-                            st.session_state.client_domains,
-                            st.session_state.competitors
-                        )
-                        results.append(result)
-                        progress.progress((i + 1) / len(keywords))
-                        time.sleep(1)
-                    
-                    progress.empty()
-                    status.empty()
-                    
-                    df_serp = pd.DataFrame(results)
-                    serp_cols = [c for c in df_serp.columns if c != 'keyword']
-                    for col in serp_cols:
-                        st.session_state.df_master[col] = st.session_state.df_master['keyword'].map(
-                            df_serp.set_index('keyword')[col].to_dict()
-                        )
-                    
-                    # Stats
-                    client_ranked = df_serp['client_pos'].notna().sum()
-                    ai_count = (df_serp['has_ai_overview'] == True).sum()
-                    
-                    st.success(f"SERP termine - Client ranke: {client_ranked}/{len(keywords)} | AI Overview: {ai_count}")
-                    
-                    # Aperçu résultats
-                    st.markdown("**Apercu positions:**")
-                    cols_to_show = ['keyword', 'client_pos'] + [f'{c}_pos' for c in st.session_state.competitors if f'{c}_pos' in df_serp.columns]
-                    st.dataframe(df_serp[cols_to_show].head(10), use_container_width=True, hide_index=True)
-                    
-                    # Stats concurrents
-                    st.markdown("**Resume positions:**")
-                    stats = {'Client': client_ranked}
-                    for c in st.session_state.competitors:
-                        col = f'{c}_pos'
-                        if col in df_serp.columns:
-                            stats[c] = df_serp[col].notna().sum()
-                    st.dataframe(pd.DataFrame([stats]), use_container_width=True, hide_index=True)
-        
-        # État actuel
-        st.divider()
-        st.markdown("""
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-            <div style="width: 3px; height: 20px; background: linear-gradient(135deg, #B7D8B2 0%, #A3C7E7 100%); border-radius: 2px;"></div>
-            <h3 style="margin: 0; color: #3A3A3A;">Etat actuel</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if len(st.session_state.df_master) > 0:
-            show_stats_cards(st.session_state.df_master)
-            
-            st.dataframe(st.session_state.df_master.head(20), use_container_width=True, hide_index=True)
-            
-            # Export
-            st.subheader("Export")
-            buffer = BytesIO()
-            st.session_state.df_master.to_excel(buffer, index=False)
-            st.download_button(
-                "Telecharger Excel",
-                data=buffer.getvalue(),
-                file_name=f"Keywords_{st.session_state.site.replace('.', '_')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.info("Aucun mot-cle - lancez l'extraction pour commencer")
-
-# =============================================================================
-# TAB 2 — COMPLEMENT (Ajouter a une analyse existante)
-# =============================================================================
-with tab2:
-    st.markdown("""
-    ### Completer une analyse existante
-    Chargez un fichier Excel d'une analyse precedente pour y ajouter des mots-cles, 
-    puis utilisez les etapes du Tab 1 pour completer l'analyse.
-    """)
-    
-    # ----- CHARGER FICHIER EXISTANT -----
-    with st.expander("**Charger fichier existant**", expanded=True):
-        st.markdown("Chargez votre fichier Excel d'une analyse precedente pour y ajouter des mots-cles.")
-        
-        uploaded = st.file_uploader("Charger fichier existant", type=['xlsx'], key="upload_complement")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        uploaded = st.file_uploader("Charger fichier Excel", type=['xlsx'], key="upload_existing")
         if uploaded:
             df_loaded = pd.read_excel(uploaded)
             df_loaded.columns = df_loaded.columns.str.strip()
@@ -1687,39 +846,850 @@ with tab2:
             st.session_state.df_master = df_loaded
             st.success(f"{len(df_loaded)} mots-cles charges")
             
-            # Stats du fichier chargé
-            col1, col2, col3 = st.columns(3)
-            with col1:
+            stats_col1, stats_col2, stats_col3 = st.columns(3)
+            with stats_col1:
                 st.metric("Mots-cles", len(df_loaded))
-            with col2:
+            with stats_col2:
                 if 'volume' in df_loaded.columns:
                     st.metric("Volume total", f"{df_loaded['volume'].sum():,.0f}")
-            with col3:
+            with stats_col3:
                 if 'category' in df_loaded.columns:
                     cats = df_loaded['category'].nunique()
                     st.metric("Categories", cats)
-            
-            st.dataframe(df_loaded.head(5), use_container_width=True, hide_index=True)
-            
-            st.info("Fichier charge. Utilisez maintenant les etapes du Tab 'Analyse complete' pour completer l'analyse.")
     
-    # ----- RESET -----
-    st.divider()
-    st.markdown("### Reinitialiser")
-    if st.button("Vider la liste de mots-cles", use_container_width=True):
-        st.session_state.df_master = pd.DataFrame()
-        st.success("Liste videe")
+    with col2:
+        if st.button("Reinitialiser", use_container_width=True):
+            st.session_state.df_master = pd.DataFrame()
+            st.success("Liste videe")
+
+
+# ----- ÉTAPE 1 : CONTEXTE BUSINESS -----
+with st.expander("**Etape 1 - Contexte business**", expanded=True):
+    st.markdown("""
+    Cette etape permet de definir le contexte strategique de l'analyse. 
+    Le systeme scrape le site client pour comprendre son activite, et utilise 
+    le document de kickoff (si fourni) pour identifier les objectifs business 
+    et les thematiques prioritaires. Ce contexte sera utilise pour generer 
+    des thematiques pertinentes et filtrer les mots-cles non pertinents.
+    """)
     
-    # ----- EXPORT -----
-    if len(st.session_state.df_master) > 0:
-        st.divider()
-        st.markdown("### Export")
-        buffer = BytesIO()
-        st.session_state.df_master.to_excel(buffer, index=False)
-        st.download_button(
-            "Telecharger Excel",
-            data=buffer.getvalue(),
-            file_name=f"Keywords_{st.session_state.site.replace('.', '_')}_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+    # Afficher si kickoff est chargé
+    if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
+        st.success(f"Document kickoff charge ({len(st.session_state.kickoff_content)} caracteres)")
+    else:
+        st.caption("Vous pouvez ajouter un document kickoff dans la barre laterale pour ameliorer la pertinence de l'analyse.")
+    
+    if st.button("Analyser le contexte business", key="btn_context", use_container_width=True):
+        progress = st.progress(0, text="Scraping du site client...")
+        
+        # Scraper le site
+        site_content = analyze_site_context(st.session_state.site)
+        st.session_state.site_content_raw = site_content
+        
+        if not site_content and not st.session_state.get('kickoff_content'):
+            progress.empty()
+            st.error("Impossible de scraper le site et pas de kickoff fourni")
+        else:
+            progress.progress(50, text="Extraction du contexte business...")
+            
+            kickoff = st.session_state.get('kickoff_content', None)
+            business_context = extract_business_context(
+                site_content,
+                st.session_state.site,
+                st.session_state.claude_api_key,
+                kickoff
+            )
+            st.session_state.business_context = business_context
+            
+            progress.progress(100, text="Termine")
+            progress.empty()
+            
+            if business_context:
+                st.success("Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
+            else:
+                st.warning("Contexte non extrait")
+    
+    # Afficher le contexte si disponible
+    if 'business_context' in st.session_state and st.session_state.business_context:
+        ctx = st.session_state.business_context
+        with st.expander("Contexte business extrait", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
+                st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
+                st.markdown("**Produits/Services:**")
+                for item in ctx.get('main_products_services', [])[:5]:
+                    st.caption(f"- {item}")
+                if ctx.get('business_objectives'):
+                    st.markdown("**Objectifs business:**")
+                    for obj in ctx.get('business_objectives', [])[:5]:
+                        st.caption(f"- {obj}")
+            with col2:
+                st.markdown("**Thematiques pertinentes:**")
+                for theme in ctx.get('relevant_themes', [])[:8]:
+                    st.caption(f"+ {theme}")
+                st.markdown("**Thematiques hors-sujet:**")
+                for theme in ctx.get('irrelevant_themes', [])[:5]:
+                    st.caption(f"- {theme}")
+    
+    if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
+        with st.expander("Contenu brut scrape"):
+            st.text(st.session_state.site_content_raw[:3000] + "...")
+
+# ----- ÉTAPE 2 : EXTRACTION SITE -----
+with st.expander("**Etape 2 - Extraction site client**"):
+    st.markdown("""
+    Cette etape recupere les mots-cles sur lesquels le site client est deja 
+    positionne dans Google. Ces donnees proviennent de l'API DataForSEO Labs 
+    qui analyse l'index Google. C'est la base de l'analyse car elle montre 
+    les positions actuelles du site.
+    """)
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        extract_site_limit = st.number_input("Nombre de mots-cles a extraire", value=100, min_value=10, max_value=1000, key="extract_site",
+                                              help="Plus ce nombre est eleve, plus vous aurez de donnees mais plus le cout sera important.")
+    with col2:
+        st.metric("Cout estime", f"~{extract_site_limit * 0.002:.2f} EUR")
+    
+    if st.button("Extraire du site client", key="btn_extract_site", use_container_width=True):
+        progress = st.progress(0, text="Connexion a DataForSEO...")
+        progress.progress(30, text=f"Extraction {st.session_state.site}...")
+        
+        kws = extract_keywords_from_site(
+            st.session_state.site,
+            st.session_state.dataforseo_login,
+            st.session_state.dataforseo_password,
+            st.session_state.location_code,
+            st.session_state.language_code,
+            extract_site_limit
         )
+        progress.progress(100, text="Termine")
+        time.sleep(0.5)
+        progress.empty()
+        
+        if kws:
+            new_df = pd.DataFrame({'keyword': kws, 'source': 'client_site'})
+            st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+            st.success(f"{len(kws)} mots-cles extraits | Total: {len(st.session_state.df_master)}")
+            
+            st.markdown("**Apercu (10 premiers):**")
+            st.dataframe(pd.DataFrame({'keyword': kws[:10]}), use_container_width=True, hide_index=True)
+        else:
+            st.warning("Aucun mot-cle trouve pour ce domaine")
+
+# ----- ÉTAPE 3 : EXTRACTION CONCURRENTS -----
+with st.expander("**Etape 3 - Extraction concurrents**"):
+    st.markdown("""
+    Cette etape recupere les mots-cles sur lesquels les concurrents sont positionnes. 
+    Cela permet de decouvrir des opportunites que le site client n'a pas encore exploitees 
+    et d'identifier les thematiques sur lesquelles les concurrents sont actifs.
+    """)
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        extract_comp_limit = st.number_input("Mots-cles par concurrent", value=100, min_value=10, max_value=500, key="extract_comp",
+                                              help="Nombre de mots-cles a extraire pour chaque concurrent. Un nombre plus eleve donne plus de donnees mais augmente le cout.")
+        competitors_to_extract = st.multiselect(
+            "Concurrents a analyser",
+            options=st.session_state.competitors,
+            default=st.session_state.competitors
+        )
+    with col2:
+        total_comp = len(competitors_to_extract) * extract_comp_limit
+        st.metric("Mots-cles estimes", f"~{total_comp}")
+        st.metric("Cout estime", f"~{total_comp * 0.002:.2f} EUR")
+    
+    if st.button("Extraire des concurrents", key="btn_extract_comp", use_container_width=True):
+        all_kws = []
+        status = st.empty()
+        progress = st.progress(0)
+        
+        for i, comp in enumerate(competitors_to_extract):
+            status.text(f"Extraction {comp}...")
+            kws = extract_keywords_from_site(
+                comp,
+                st.session_state.dataforseo_login,
+                st.session_state.dataforseo_password,
+                st.session_state.location_code,
+                st.session_state.language_code,
+                extract_comp_limit
+            )
+            all_kws.extend([{'keyword': kw, 'source': f'competitor:{comp}'} for kw in kws])
+            progress.progress((i + 1) / len(competitors_to_extract))
+            time.sleep(0.5)
+        
+        progress.empty()
+        status.empty()
+        
+        if all_kws:
+            new_df = pd.DataFrame(all_kws)
+            before = len(st.session_state.df_master)
+            st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+            added = len(st.session_state.df_master) - before
+            st.success(f"{added} nouveaux mots-cles | Total: {len(st.session_state.df_master)}")
+            
+            st.markdown("**Apercu par concurrent:**")
+            preview_df = pd.DataFrame(all_kws)
+            st.dataframe(preview_df.groupby('source').size().reset_index(name='count'), use_container_width=True, hide_index=True)
+            st.dataframe(preview_df.head(10), use_container_width=True, hide_index=True)
+        else:
+            st.warning("Aucun mot-cle trouve")
+
+# ----- ÉTAPE 4 : THÉMATIQUES PRINCIPALES -----
+with st.expander("**Etape 4 - Thematiques principales**"):
+    st.markdown("""
+    Cette etape genere les thematiques principales a cibler, basees sur le contexte 
+    business extrait a l'etape 1. Claude analyse le contenu du site, les objectifs 
+    du kickoff, et propose des thematiques strategiques alignees avec les priorites 
+    du client. Ces thematiques serviront de base pour l'expansion des mots-cles.
+    """)
+    
+    if 'business_context' not in st.session_state:
+        st.warning("Lancez d'abord l'etape 1 (Contexte business) pour generer des thematiques pertinentes.")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        claude_seeds_count = st.number_input("Nombre de thematiques a generer", value=50, min_value=10, max_value=200, key="claude_seeds",
+                                              help="Nombre de mots-cles thematiques a generer. Ces mots-cles serviront de base pour l'expansion.")
+    with col2:
+        st.metric("Tokens estimes", f"~{claude_seeds_count * 50}")
+    
+    if st.button("Generer les thematiques", key="btn_claude_seeds", use_container_width=True):
+        progress = st.progress(0, text="Récupération contenu du site...")
+        site_url = f"https://www.{st.session_state.site}"
+        site_content = fetch_page_with_jina(site_url)
+        
+        if not site_content:
+            progress.empty()
+            st.warning("Impossible de récupérer le contenu du site")
+        else:
+            progress.progress(30, text="Analyse par Claude...")
+            existing = st.session_state.df_master['keyword'].tolist() if len(st.session_state.df_master) > 0 else []
+            
+            seeds = generate_claude_seeds(
+                site_content,
+                existing,
+                claude_seeds_count,
+                st.session_state.language_code,
+                st.session_state.claude_api_key
+            )
+            progress.progress(70, text="Validation des volumes...")
+            
+            if seeds:
+                # Valider avec volumes
+                vol_data = fetch_volumes(
+                    seeds,
+                    st.session_state.dataforseo_login,
+                    st.session_state.dataforseo_password,
+                    st.session_state.location_code,
+                    st.session_state.language_code
+                )
+                valid_seeds = [kw for kw in seeds if vol_data.get(kw, {}).get('volume', 0) >= 10]
+                
+                progress.progress(100, text="Terminé!")
+                time.sleep(0.3)
+                progress.empty()
+                
+                if valid_seeds:
+                    # Stocker les volumes déjà récupérés pour éviter un double appel
+                    new_df = pd.DataFrame({
+                        'keyword': valid_seeds, 
+                        'source': 'claude_seeds',
+                        'volume': [vol_data.get(kw, {}).get('volume', 0) for kw in valid_seeds],
+                        'cpc': [vol_data.get(kw, {}).get('cpc', 0.0) for kw in valid_seeds]
+                    })
+                    before = len(st.session_state.df_master)
+                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+                    added = len(st.session_state.df_master) - before
+                    
+                    st.success(f"{len(seeds)} generes, {len(valid_seeds)} avec volume | {added} nouveaux ajoutes")
+                    st.markdown("**Thematiques generees:**")
+                    st.dataframe(pd.DataFrame({'keyword': valid_seeds[:15]}), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Aucune thematique avec volume suffisant")
+            else:
+                progress.empty()
+                st.warning("Claude n'a pas genere de thematiques")
+
+# ----- ÉTAPE 5 : EXPANSION RELATED -----
+with st.expander("**Etape 5 - Expansion (mots-cles lies)**"):
+    st.markdown("""
+    Cette etape elargit la liste en cherchant les mots-cles lies a ceux deja collectes. 
+    Le systeme selectionne les meilleurs mots-cles (par volume et par diversite thematique) 
+    et interroge l'API Google Ads pour trouver des variantes et synonymes recherches par les utilisateurs.
+    """)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        expansion_top_volume = st.number_input("Top mots-cles par volume", value=50, min_value=10, max_value=200, key="exp_top",
+                                                help="Nombre de mots-cles a fort volume a utiliser comme base pour l'expansion.")
+    with col2:
+        expansion_per_cluster = st.number_input("Mots-cles par cluster", value=10, min_value=5, max_value=50, key="exp_cluster",
+                                                 help="Nombre de mots-cles a prendre dans chaque groupe thematique pour assurer la diversite.")
+    with col3:
+        related_per_keyword = st.number_input("Lies par mot-cle", value=30, min_value=10, max_value=100, key="related_per",
+                                               help="Nombre de mots-cles lies a recuperer pour chaque mot-cle de base.")
+    
+    total_seeds = expansion_top_volume + (15 * expansion_per_cluster)
+    st.caption(f"Bases estimees: ~{total_seeds} | Lies estimes: ~{total_seeds * related_per_keyword} | Cout: ~{total_seeds * 0.005:.2f} EUR")
+    
+    if st.button("Lancer l'expansion", key="btn_expansion", use_container_width=True):
+        if len(st.session_state.df_master) == 0:
+            st.warning("Lancez d'abord l'extraction (etapes 2-4)")
+        elif 'volume' not in st.session_state.df_master.columns:
+            st.warning("Lancez d'abord l'etape 6 (Volumes) pour avoir les donnees de volume")
+        else:
+            df_with_vol = st.session_state.df_master[st.session_state.df_master['volume'] > 0].copy()
+            
+            if len(df_with_vol) == 0:
+                st.warning("Pas de keywords avec volume")
+            else:
+                # Sélection seeds: top volume + clusters
+                top_seeds = df_with_vol.nlargest(expansion_top_volume, 'volume')['keyword'].tolist()
+                
+                # Clusters par mots communs
+                clusters = {}
+                for kw in df_with_vol['keyword'].tolist():
+                    for w in kw.lower().split():
+                        if len(w) > 4:
+                            clusters.setdefault(w, []).append(kw)
+                
+                vol_dict = dict(zip(df_with_vol['keyword'], df_with_vol['volume']))
+                cluster_seeds = set()
+                for theme, kws in sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)[:15]:
+                    sorted_kws = sorted(kws, key=lambda k: vol_dict.get(k, 0), reverse=True)
+                    cluster_seeds.update(sorted_kws[:expansion_per_cluster])
+                
+                seeds = list(set(top_seeds) | cluster_seeds)
+                st.info(f"{len(seeds)} mots-cles de base selectionnes (top {expansion_top_volume} + clusters)")
+                
+                # Récupérer related
+                all_related = []
+                progress = st.progress(0)
+                status = st.empty()
+                
+                for i, seed in enumerate(seeds):
+                    status.text(f"{i+1}/{len(seeds)} - {seed[:30]}...")
+                    related = get_related_keywords(
+                        seed,
+                        st.session_state.dataforseo_login,
+                        st.session_state.dataforseo_password,
+                        st.session_state.location_code,
+                        st.session_state.language_code,
+                        related_per_keyword
+                    )
+                    all_related.extend([r['keyword'] for r in related if r['volume'] >= 10])
+                    progress.progress((i + 1) / len(seeds))
+                    time.sleep(0.3)
+                
+                progress.empty()
+                status.empty()
+                
+                unique_related = list(set(all_related))
+                if unique_related:
+                    new_df = pd.DataFrame({'keyword': unique_related, 'source': 'related'})
+                    before = len(st.session_state.df_master)
+                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+                    added = len(st.session_state.df_master) - before
+                    
+                    st.success(f"{len(unique_related)} mots-cles lies uniques | {added} nouveaux ajoutes")
+                    st.markdown("**Exemples de mots-cles lies:**")
+                    st.dataframe(pd.DataFrame({'keyword': unique_related[:15]}), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Aucun mot-cle lie trouve")
+
+# ----- ÉTAPE 6 : VOLUMES -----
+with st.expander("**Etape 6 - Recuperer les volumes**"):
+    st.markdown("""
+    Cette etape recupere le volume de recherche mensuel et le CPC (cout par clic) pour chaque 
+    mot-cle via l'API Google Ads. Ces donnees permettent de prioriser les mots-cles en fonction 
+    de leur potentiel de trafic reel.
+    """)
+    
+    missing_vol = 0
+    if len(st.session_state.df_master) > 0 and 'volume' in st.session_state.df_master.columns:
+        # Seulement les None, pas les 0 (0 = déjà vérifié, pas de volume)
+        missing_vol = st.session_state.df_master['volume'].isna().sum()
+    else:
+        missing_vol = len(st.session_state.df_master)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Mots-cles sans volume", missing_vol)
+    with col2:
+        st.metric("Cout estime", f"~{missing_vol * 0.005:.2f} EUR")
+    
+    if st.button("Recuperer les volumes", key="btn_volumes", use_container_width=True):
+        if len(st.session_state.df_master) == 0:
+            st.warning("Pas de keywords — lance d'abord l'extraction")
+        else:
+            # Identifier les keywords sans volume (nouveaux ou jamais traités)
+            if 'volume' not in st.session_state.df_master.columns:
+                st.session_state.df_master['volume'] = None
+                st.session_state.df_master['cpc'] = None
+            
+            # Keywords à traiter = ceux sans volume (None ou jamais défini)
+            mask_missing = st.session_state.df_master['volume'].isna()
+            keywords_to_fetch = st.session_state.df_master[mask_missing]['keyword'].tolist()
+            
+            if len(keywords_to_fetch) == 0:
+                st.info("✅ Tous les keywords ont déjà un volume. Rien à récupérer.")
+            else:
+                status = st.empty()
+                status.text(f"📊 Récupération volumes pour {len(keywords_to_fetch)} keywords...")
+                
+                vol_data = fetch_volumes(
+                    keywords_to_fetch,
+                    st.session_state.dataforseo_login,
+                    st.session_state.dataforseo_password,
+                    st.session_state.location_code,
+                    st.session_state.language_code
+                )
+                
+                # Mettre à jour uniquement les keywords sans volume
+                for idx, row in st.session_state.df_master[mask_missing].iterrows():
+                    kw = row['keyword']
+                    st.session_state.df_master.at[idx, 'volume'] = vol_data.get(kw, {}).get('volume', 0)
+                    st.session_state.df_master.at[idx, 'cpc'] = vol_data.get(kw, {}).get('cpc', 0.0)
+                
+                status.empty()
+                
+                total_vol = st.session_state.df_master['volume'].sum()
+                with_vol = (st.session_state.df_master['volume'] > 0).sum()
+                st.success(f"✅ {len(keywords_to_fetch)} volumes récupérés — {with_vol}/{len(st.session_state.df_master)} avec volume | Total: {total_vol:,.0f}")
+                
+                # Aperçu top volumes
+                st.markdown("**📋 Top 10 par volume :**")
+                top_vol = st.session_state.df_master.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
+                st.dataframe(top_vol, use_container_width=True, hide_index=True)
+
+# ----- ÉTAPE 7 : FILTRAGE -----
+with st.expander("**Etape 7 - Filtrage**"):
+    st.markdown("""
+    Cette etape nettoie la liste en supprimant les mots-cles non pertinents: 
+    volume trop faible, mauvaise langue, marques concurrentes ou hors-sujet. 
+    Le filtrage par langue utilise une detection automatique pour identifier 
+    les mots-cles dans la mauvaise langue.
+    """)
+    
+    # --- FILTRAGE PAR VOLUME (principal) ---
+    st.markdown("### Filtrage par volume")
+    col1, col2 = st.columns(2)
+    with col1:
+        min_volume = st.number_input("Volume minimum", value=10, min_value=0, key="min_vol")
+    with col2:
+        if 'volume' in st.session_state.df_master.columns:
+            to_remove = (st.session_state.df_master['volume'] < min_volume).sum()
+            st.metric("A supprimer", to_remove)
+    
+    if st.button("Filtrer par volume", key="btn_filter_vol", use_container_width=True):
+        if 'volume' in st.session_state.df_master.columns:
+            before = len(st.session_state.df_master)
+            removed_kws = st.session_state.df_master[st.session_state.df_master['volume'] < min_volume]['keyword'].tolist()
+            st.session_state.df_master = st.session_state.df_master[
+                st.session_state.df_master['volume'] >= min_volume
+            ].reset_index(drop=True)
+            removed = before - len(st.session_state.df_master)
+            st.success(f"{removed} supprimes - Reste: {len(st.session_state.df_master)}")
+            
+            if removed > 0:
+                st.markdown("**Exemples supprimes:**")
+                st.code('\n'.join(removed_kws[:10]))
+    
+    st.divider()
+    
+    # --- ANALYSE DU CONTEXTE BUSINESS ---
+    st.markdown("### Analyse du contexte business")
+    st.caption("Scrape le site avec Jina et extrait le contexte business pour un filtrage intelligent")
+    
+    # Afficher si kickoff est chargé
+    if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
+        st.success(f"Document kickoff charge ({len(st.session_state.kickoff_content)} caracteres)")
+    else:
+        st.caption("Vous pouvez ajouter un document kickoff dans la sidebar pour ameliorer le filtrage")
+    
+    if st.button("Analyser le site client", key="btn_analyze_site", use_container_width=True):
+        progress = st.progress(0, text="Scraping du site avec Jina...")
+        
+        # Scraper le site
+        site_content = analyze_site_context(st.session_state.site)
+        st.session_state.site_content_raw = site_content
+        
+        if not site_content and not st.session_state.get('kickoff_content'):
+            progress.empty()
+            st.error("Impossible de scraper le site et pas de kickoff")
+        else:
+            progress.progress(50, text="Extraction du contexte business...")
+            
+            # Extraire le contexte business (avec kickoff si disponible)
+            kickoff = st.session_state.get('kickoff_content', None)
+            business_context = extract_business_context(
+                site_content,
+                st.session_state.site,
+                st.session_state.claude_api_key,
+                kickoff
+            )
+            st.session_state.business_context = business_context
+            
+            progress.progress(100, text="Terminé!")
+            progress.empty()
+            
+            if business_context:
+                st.success("Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
+            else:
+                st.warning("Contexte non extrait, le filtrage utilisera le contenu brut")
+    
+    # Afficher le contexte si disponible
+    if 'business_context' in st.session_state and st.session_state.business_context:
+        ctx = st.session_state.business_context
+        with st.expander("Contexte business extrait", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
+                st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
+                st.markdown("**Produits/Services:**")
+                for item in ctx.get('main_products_services', [])[:5]:
+                    st.caption(f"- {item}")
+                if ctx.get('business_objectives'):
+                    st.markdown("**Objectifs business:**")
+                    for obj in ctx.get('business_objectives', [])[:5]:
+                        st.caption(f"- {obj}")
+            with col2:
+                st.markdown("**Themes pertinents:**")
+                for theme in ctx.get('relevant_themes', [])[:8]:
+                    st.caption(f"+ {theme}")
+                st.markdown("**Themes hors-sujet:**")
+                for theme in ctx.get('irrelevant_themes', [])[:5]:
+                    st.caption(f"- {theme}")
+    
+    # Afficher le contenu brut scrapé
+    if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
+        with st.expander("Contenu brut scrape par Jina"):
+            st.text(st.session_state.site_content_raw[:3000] + "...")
+    
+    st.divider()
+    
+    # --- FILTRAGE PAR LANGUE (programmatique) ---
+    st.markdown("### Filtrage par langue")
+    if LANGDETECT_AVAILABLE:
+        st.caption("Detection automatique de la langue avec langdetect")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Analyser les langues", key="btn_analyze_lang", use_container_width=True):
+                if len(st.session_state.df_master) == 0:
+                    st.warning("Pas de mots-cles")
+                else:
+                    keywords = st.session_state.df_master['keyword'].tolist()
+                    target_lang = st.session_state.language_code  # 'nl' ou 'fr'
+                    
+                    keywords_ok, keywords_wrong = filter_by_language(keywords, target_lang)
+                    
+                    st.session_state.lang_filter_preview = {
+                        'ok': keywords_ok,
+                        'wrong': keywords_wrong
+                    }
+                    
+                    st.info(f"**Analyse**: {len(keywords_ok)} OK | {len(keywords_wrong)} mauvaise langue detectee")
+                    
+                    if keywords_wrong:
+                        with st.expander(f"Mauvaise langue ({len(keywords_wrong)})", expanded=True):
+                            for kw, detected_lang in keywords_wrong[:50]:
+                                st.caption(f"- `{kw}` -> detecte: **{detected_lang}** (cible: {target_lang})")
+        
+        with col2:
+            if st.button("Supprimer mauvaise langue", key="btn_remove_lang", use_container_width=True):
+                if 'lang_filter_preview' not in st.session_state:
+                    st.warning("Lancez d'abord l'analyse des langues")
+                else:
+                    keywords_ok = st.session_state.lang_filter_preview['ok']
+                    before = len(st.session_state.df_master)
+                    st.session_state.df_master = st.session_state.df_master[
+                        st.session_state.df_master['keyword'].isin(keywords_ok)
+                    ].reset_index(drop=True)
+                    removed = before - len(st.session_state.df_master)
+                    st.success(f"{removed} supprimes - Reste: {len(st.session_state.df_master)}")
+                    del st.session_state.lang_filter_preview
+    else:
+        st.warning("langdetect non installe. Installez avec: pip install langdetect")
+    
+    st.divider()
+    
+    # --- FILTRAGE CLAUDE ---
+    st.markdown("### Filtrage intelligent (marques, hors-sujet)")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Preview filtrage", key="btn_preview_claude", use_container_width=True):
+            if len(st.session_state.df_master) == 0:
+                st.warning("Pas de keywords")
+            elif 'business_context' not in st.session_state:
+                st.warning("⚠️ Analyse d'abord le site client!")
+            else:
+                keywords = st.session_state.df_master['keyword'].tolist()
+                progress = st.progress(0, text="Filtrage par Claude...")
+                
+                # Utiliser le contexte business structuré
+                ctx = st.session_state.business_context
+                site_content = st.session_state.get('site_content_raw', '')
+                
+                result = filter_with_claude_v2(
+                    keywords,
+                    st.session_state.site,
+                    st.session_state.language_code,
+                    st.session_state.claude_api_key,
+                    st.session_state.competitors,
+                    ctx,
+                    site_content
+                )
+                progress.progress(100, text="Terminé!")
+                progress.empty()
+                
+                st.session_state.claude_filter_preview = result
+                
+                filtered_out = result.get('filtered_out', {})
+                relevant = result.get('relevant', [])
+                total_filtered = len(keywords) - len(relevant)
+                
+                st.info(f"📋 **Preview**: {total_filtered} keywords seraient supprimés sur {len(keywords)} | **{len(relevant)} gardés**")
+                
+                # Afficher ce qui est GARDÉ
+                with st.expander(f"✅ Keywords GARDÉS ({len(relevant)})", expanded=True):
+                    st.code('\n'.join(relevant[:100]))
+                    if len(relevant) > 100:
+                        st.caption(f"... et {len(relevant) - 100} autres")
+                
+                # Afficher ce qui est filtré par catégorie
+                cat_labels = {
+                    'competitor_brands': '🏷️ Marques concurrentes',
+                    'wrong_language': '🌍 Mauvaise langue',
+                    'locations': '📍 Villes/Locations',
+                    'off_topic': '❌ Hors-sujet'
+                }
+                for cat, items in filtered_out.items():
+                    if items and len(items) > 0:
+                        label = cat_labels.get(cat, cat)
+                        with st.expander(f"{label} ({len(items)})"):
+                            st.code('\n'.join(items[:50]))
+    
+    with col2:
+        if st.button("✅ Appliquer le filtrage", key="btn_apply_claude", use_container_width=True):
+            if 'claude_filter_preview' not in st.session_state:
+                st.warning("Lance d'abord le Preview!")
+            else:
+                result = st.session_state.claude_filter_preview
+                relevant = result.get('relevant', st.session_state.df_master['keyword'].tolist())
+                
+                before = len(st.session_state.df_master)
+                st.session_state.df_master = st.session_state.df_master[
+                    st.session_state.df_master['keyword'].isin(relevant)
+                ].reset_index(drop=True)
+                removed = before - len(st.session_state.df_master)
+                
+                st.success(f"✅ {removed} filtrés — Reste: {len(st.session_state.df_master)}")
+                del st.session_state.claude_filter_preview
+
+# ----- ÉTAPE 8 : CATÉGORISATION -----
+with st.expander("**Etape 8 - Categorisation**"):
+    st.markdown("""
+    Cette etape regroupe les mots-cles par categorie thematique. Claude analyse 
+    la liste et propose des regroupements logiques pour organiser le travail 
+    et creer des silos de contenu.
+    """)
+    
+    only_uncategorized = st.checkbox("Uniquement les non-catégorisés", value=True, key="only_uncat")
+    
+    to_categorize = 0
+    if len(st.session_state.df_master) > 0:
+        if only_uncategorized and 'category' in st.session_state.df_master.columns:
+            to_categorize = st.session_state.df_master['category'].isna().sum() + (st.session_state.df_master['category'] == '').sum()
+        else:
+            to_categorize = len(st.session_state.df_master)
+    
+    st.metric("Mots-cles a categoriser", to_categorize)
+    
+    if st.button("Categoriser avec Claude", key="btn_categorize", use_container_width=True):
+        if len(st.session_state.df_master) == 0:
+            st.warning("Pas de keywords")
+        else:
+            if only_uncategorized and 'category' in st.session_state.df_master.columns:
+                kws_to_cat = st.session_state.df_master[
+                    st.session_state.df_master['category'].isna() | (st.session_state.df_master['category'] == '')
+                ]['keyword'].tolist()
+            else:
+                kws_to_cat = st.session_state.df_master['keyword'].tolist()
+            
+            if not kws_to_cat:
+                st.success("Tous les mots-cles sont deja categorises")
+            else:
+                progress = st.progress(0, text="Catégorisation par Claude...")
+                
+                categories = categorize_with_claude(
+                    kws_to_cat,
+                    st.session_state.site,
+                    st.session_state.claude_api_key
+                )
+                progress.progress(100, text="Terminé!")
+                time.sleep(0.3)
+                progress.empty()
+                
+                if categories:
+                    # Construire mapping keyword → category
+                    kw_cat_map = {}
+                    for cat, kws in categories.items():
+                        for kw in kws:
+                            kw_str = kw if isinstance(kw, str) else kw.get('kw', '')
+                            kw_cat_map[kw_str.lower()] = cat
+                    
+                    # Appliquer au master
+                    if 'category' not in st.session_state.df_master.columns:
+                        st.session_state.df_master['category'] = ''
+                    
+                    for idx, row in st.session_state.df_master.iterrows():
+                        cat = kw_cat_map.get(row['keyword'].lower())
+                        if cat:
+                            st.session_state.df_master.at[idx, 'category'] = cat
+                    
+                    categorized = (st.session_state.df_master['category'].notna() & (st.session_state.df_master['category'] != '')).sum()
+                    st.success(f"{categorized}/{len(st.session_state.df_master)} categorises")
+                    
+                    st.markdown("**Categories:**")
+                    for cat, kws in categories.items():
+                        st.caption(f"**{cat}**: {len(kws)} mots-cles")
+                else:
+                    st.warning("Erreur de categorisation")
+
+# ----- ÉTAPE 9 : SERP + AI OVERVIEW -----
+with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
+    st.markdown("""
+    Cette etape analyse les resultats de recherche Google pour chaque mot-cle. 
+    Elle recupere la position du site client et des concurrents dans les 100 premiers 
+    resultats, et detecte la presence d'AI Overview. Cela permet d'identifier les 
+    opportunites de positionnement et les mots-cles ou l'IA de Google est presente.
+    """)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    # Options SERP
+    force_rescan = st.checkbox("Force rescan (tout rescanner)", value=False, key="force_rescan")
+    
+    # Filtre par catégorie
+    categories_list = []
+    if 'category' in st.session_state.df_master.columns:
+        categories_list = st.session_state.df_master['category'].dropna().unique().tolist()
+    scan_category = st.selectbox("Filtrer par catégorie", [""] + categories_list, key="scan_cat")
+    
+    # Compter keywords sans SERP
+    df_to_scan = st.session_state.df_master.copy()
+    if scan_category:
+        df_to_scan = df_to_scan[df_to_scan['category'] == scan_category]
+    
+    if force_rescan:
+        needs_serp = len(df_to_scan)
+    else:
+        if 'client_pos' in df_to_scan.columns:
+            needs_serp = df_to_scan['client_pos'].isna().sum()
+        else:
+            needs_serp = len(df_to_scan)
+    
+    with col1:
+        final_limit = st.number_input("Limite (0 = tous)", value=0, min_value=0, max_value=1000, key="final_limit")
+    with col2:
+        actual_count = needs_serp if final_limit == 0 else min(final_limit, needs_serp)
+        st.metric("Keywords à analyser", actual_count)
+    with col3:
+        st.metric("Cout estime", f"~{actual_count * 0.0075:.2f} EUR")
+        st.caption(f"Duree estimee: ~{actual_count * 1.5 / 60:.0f} min")
+    
+    if st.button("Analyser SERP", key="btn_serp", use_container_width=True):
+        if len(df_to_scan) == 0:
+            st.warning("Pas de keywords")
+        else:
+            # Sélectionner les keywords à scanner
+            if force_rescan:
+                keywords = df_to_scan['keyword'].tolist()
+            else:
+                if 'client_pos' in df_to_scan.columns:
+                    keywords = df_to_scan[df_to_scan['client_pos'].isna()]['keyword'].tolist()
+                else:
+                    keywords = df_to_scan['keyword'].tolist()
+            
+            if final_limit > 0:
+                keywords = keywords[:final_limit]
+            
+            results = []
+            progress = st.progress(0)
+            status = st.empty()
+            
+            for i, kw in enumerate(keywords):
+                status.text(f"{i+1}/{len(keywords)} - {kw[:40]}...")
+                result = analyze_serp(
+                    kw,
+                    st.session_state.dataforseo_login,
+                    st.session_state.dataforseo_password,
+                    st.session_state.location_code,
+                    st.session_state.language_code,
+                    st.session_state.client_domains,
+                    st.session_state.competitors
+                )
+                results.append(result)
+                progress.progress((i + 1) / len(keywords))
+                time.sleep(1)
+            
+            progress.empty()
+            status.empty()
+            
+            df_serp = pd.DataFrame(results)
+            serp_cols = [c for c in df_serp.columns if c != 'keyword']
+            for col in serp_cols:
+                st.session_state.df_master[col] = st.session_state.df_master['keyword'].map(
+                    df_serp.set_index('keyword')[col].to_dict()
+                )
+            
+            # Stats
+            client_ranked = df_serp['client_pos'].notna().sum()
+            ai_count = (df_serp['has_ai_overview'] == True).sum()
+            
+            st.success(f"SERP termine - Client ranke: {client_ranked}/{len(keywords)} | AI Overview: {ai_count}")
+            
+            # Aperçu résultats
+            st.markdown("**Apercu positions:**")
+            cols_to_show = ['keyword', 'client_pos'] + [f'{c}_pos' for c in st.session_state.competitors if f'{c}_pos' in df_serp.columns]
+            st.dataframe(df_serp[cols_to_show].head(10), use_container_width=True, hide_index=True)
+            
+            # Stats concurrents
+            st.markdown("**Resume positions:**")
+            stats = {'Client': client_ranked}
+            for c in st.session_state.competitors:
+                col = f'{c}_pos'
+                if col in df_serp.columns:
+                    stats[c] = df_serp[col].notna().sum()
+            st.dataframe(pd.DataFrame([stats]), use_container_width=True, hide_index=True)
+
+# État actuel
+st.divider()
+st.markdown("""
+<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+    <div style="width: 3px; height: 20px; background: linear-gradient(135deg, #B7D8B2 0%, #A3C7E7 100%); border-radius: 2px;"></div>
+    <h3 style="margin: 0; color: #3A3A3A;">Etat actuel</h3>
+</div>
+""", unsafe_allow_html=True)
+
+if len(st.session_state.df_master) > 0:
+    show_stats_cards(st.session_state.df_master)
+    
+    st.dataframe(st.session_state.df_master.head(20), use_container_width=True, hide_index=True)
+    
+    # Export
+    st.subheader("Export")
+    buffer = BytesIO()
+    st.session_state.df_master.to_excel(buffer, index=False)
+    st.download_button(
+        "Telecharger Excel",
+        data=buffer.getvalue(),
+        file_name=f"Keywords_{st.session_state.site.replace('.', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.info("Aucun mot-cle - lancez l'extraction pour commencer")
