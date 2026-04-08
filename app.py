@@ -1460,9 +1460,13 @@ with tab1:
                         st.success(f"✅ {removed} filtrés — Reste: {len(st.session_state.df_master)}")
                         del st.session_state.claude_filter_preview
         
-        # ----- ÉTAPE 6b : CATÉGORISATION (E1) -----
-        with st.expander("**6️⃣b Catégorisation Claude**"):
-            st.info("📖 **Quoi ?** Claude analyse les keywords et les regroupe par catégorie thématique.\n\n**Pourquoi ?** Organiser ta liste pour prioriser par thème et créer des silos de contenu.")
+        # ----- ÉTAPE 8 : CATÉGORISATION -----
+        with st.expander("**Etape 8 - Categorisation**"):
+            st.markdown("""
+            Cette etape regroupe les mots-cles par categorie thematique. Claude analyse 
+            la liste et propose des regroupements logiques pour organiser le travail 
+            et creer des silos de contenu.
+            """)
             
             only_uncategorized = st.checkbox("Uniquement les non-catégorisés", value=True, key="only_uncat")
             
@@ -1473,9 +1477,9 @@ with tab1:
                 else:
                     to_categorize = len(st.session_state.df_master)
             
-            st.metric("Keywords à catégoriser", to_categorize)
+            st.metric("Mots-cles a categoriser", to_categorize)
             
-            if st.button("🏷️ Catégoriser avec Claude", key="btn_categorize", use_container_width=True):
+            if st.button("Categoriser avec Claude", key="btn_categorize", use_container_width=True):
                 if len(st.session_state.df_master) == 0:
                     st.warning("Pas de keywords")
                 else:
@@ -1487,7 +1491,7 @@ with tab1:
                         kws_to_cat = st.session_state.df_master['keyword'].tolist()
                     
                     if not kws_to_cat:
-                        st.success("✅ Tous les keywords sont déjà catégorisés")
+                        st.success("Tous les mots-cles sont deja categorises")
                     else:
                         progress = st.progress(0, text="Catégorisation par Claude...")
                         
@@ -1518,17 +1522,22 @@ with tab1:
                                     st.session_state.df_master.at[idx, 'category'] = cat
                             
                             categorized = (st.session_state.df_master['category'].notna() & (st.session_state.df_master['category'] != '')).sum()
-                            st.success(f"✅ {categorized}/{len(st.session_state.df_master)} catégorisés")
+                            st.success(f"{categorized}/{len(st.session_state.df_master)} categorises")
                             
-                            st.markdown("**📋 Catégories :**")
+                            st.markdown("**Categories:**")
                             for cat, kws in categories.items():
-                                st.caption(f"**{cat}**: {len(kws)} keywords")
+                                st.caption(f"**{cat}**: {len(kws)} mots-cles")
                         else:
-                            st.warning("Erreur de catégorisation")
+                            st.warning("Erreur de categorisation")
         
-        # ----- ÉTAPE 7 : SERP -----
-        with st.expander("**7️⃣ Analyse SERP + AI Overview**"):
-            st.info("📖 **Quoi ?** Pour chaque keyword, récupère la position de ton site + concurrents dans les 100 premiers résultats Google, et détecte la présence d'AI Overview.\n\n**Pourquoi ?** Identifier où tu ranks, où sont tes concurrents, et les opportunités de positionnement.")
+        # ----- ÉTAPE 9 : SERP + AI OVERVIEW -----
+        with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
+            st.markdown("""
+            Cette etape analyse les resultats de recherche Google pour chaque mot-cle. 
+            Elle recupere la position du site client et des concurrents dans les 100 premiers 
+            resultats, et detecte la presence d'AI Overview. Cela permet d'identifier les 
+            opportunites de positionnement et les mots-cles ou l'IA de Google est presente.
+            """)
             
             col1, col2, col3 = st.columns(3)
             
@@ -1560,10 +1569,10 @@ with tab1:
                 actual_count = needs_serp if final_limit == 0 else min(final_limit, needs_serp)
                 st.metric("Keywords à analyser", actual_count)
             with col3:
-                st.metric("Coût estimé", f"~€{actual_count * 0.0075:.2f}")
-                st.caption(f"⏱️ ~{actual_count * 1.5 / 60:.0f} min")
+                st.metric("Cout estime", f"~{actual_count * 0.0075:.2f} EUR")
+                st.caption(f"Duree estimee: ~{actual_count * 1.5 / 60:.0f} min")
             
-            if st.button("🎯 Analyser SERP", key="btn_serp", use_container_width=True):
+            if st.button("Analyser SERP", key="btn_serp", use_container_width=True):
                 if len(df_to_scan) == 0:
                     st.warning("Pas de keywords")
                 else:
@@ -1584,7 +1593,7 @@ with tab1:
                     status = st.empty()
                     
                     for i, kw in enumerate(keywords):
-                        status.text(f"🔍 {i+1}/{len(keywords)} — {kw[:40]}...")
+                        status.text(f"{i+1}/{len(keywords)} - {kw[:40]}...")
                         result = analyze_serp(
                             kw,
                             st.session_state.dataforseo_login,
@@ -1612,15 +1621,15 @@ with tab1:
                     client_ranked = df_serp['client_pos'].notna().sum()
                     ai_count = (df_serp['has_ai_overview'] == True).sum()
                     
-                    st.success(f"✅ SERP terminé — Client ranké: {client_ranked}/{len(keywords)} | AI Overview: {ai_count}")
+                    st.success(f"SERP termine - Client ranke: {client_ranked}/{len(keywords)} | AI Overview: {ai_count}")
                     
                     # Aperçu résultats
-                    st.markdown("**📋 Aperçu positions :**")
+                    st.markdown("**Apercu positions:**")
                     cols_to_show = ['keyword', 'client_pos'] + [f'{c}_pos' for c in st.session_state.competitors if f'{c}_pos' in df_serp.columns]
                     st.dataframe(df_serp[cols_to_show].head(10), use_container_width=True, hide_index=True)
                     
                     # Stats concurrents
-                    st.markdown("**📊 Résumé positions :**")
+                    st.markdown("**Resume positions:**")
                     stats = {'Client': client_ranked}
                     for c in st.session_state.competitors:
                         col = f'{c}_pos'
@@ -1633,7 +1642,7 @@ with tab1:
         st.markdown("""
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
             <div style="width: 3px; height: 20px; background: linear-gradient(135deg, #B7D8B2 0%, #A3C7E7 100%); border-radius: 2px;"></div>
-            <h3 style="margin: 0; color: #3A3A3A;">État actuel</h3>
+            <h3 style="margin: 0; color: #3A3A3A;">Etat actuel</h3>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1643,17 +1652,17 @@ with tab1:
             st.dataframe(st.session_state.df_master.head(20), use_container_width=True, hide_index=True)
             
             # Export
-            st.subheader("📥 Export")
+            st.subheader("Export")
             buffer = BytesIO()
             st.session_state.df_master.to_excel(buffer, index=False)
             st.download_button(
-                "⬇️ Télécharger Excel",
+                "Telecharger Excel",
                 data=buffer.getvalue(),
                 file_name=f"Keywords_{st.session_state.site.replace('.', '_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info("Aucun keyword — lance l'extraction pour commencer")
+            st.info("Aucun mot-cle - lancez l'extraction pour commencer")
 
 # =============================================================================
 # TAB 2 — ANALYSE 2 (Complément)
