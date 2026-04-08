@@ -358,8 +358,141 @@ def analyze_site_context(site_domain, jina_key=None):
     
     return content
 
+def extract_business_context(site_content, site_domain, claude_api_key, kickoff_content=None):
+    """Utilise Claude pour extraire un résumé structuré du business à partir du contenu scrapé et du kickoff"""
+    try:
+        client = anthropic.Anthropic(api_key=claude_api_key)
+        
+        # Section kickoff si disponible
+        kickoff_section = ""
+        if kickoff_content:
+            kickoff_section = f"""
+DOCUMENT DE KICKOFF (objectifs business du client):
+{kickoff_content[:4000]}
+
+Ce document contient les objectifs stratégiques du client. Utilise-le pour comprendre:
+- Les priorités business
+- Les thèmes à cibler en priorité
+- Ce qui est hors-scope
+"""
+        
+        prompt = f"""Analyse ces informations et extrais le contexte business pour le SEO.
+
+{kickoff_section}
+
+CONTENU DU SITE {site_domain}:
+{site_content[:5000] if site_content else "Non disponible"}
+
+Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
+{{
+    "business_type": "description courte du type de business (ex: 'gestion de patrimoine', 'e-commerce mode', 'SaaS B2B')",
+    "main_products_services": ["liste des produits/services principaux"],
+    "target_audience": "description de la cible",
+    "business_objectives": ["objectifs business extraits du kickoff si disponible"],
+    "relevant_themes": ["liste de 10-15 thèmes SEO pertinents pour ce business"],
+    "irrelevant_themes": ["liste de thèmes qui seraient hors-sujet"],
+    "competitor_type": "type de concurrents à exclure (ex: 'banques traditionnelles', 'grandes surfaces')"
+}}"""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        match = re.search(r'\{[\s\S]*\}', response.content[0].text)
+        if match:
+            return json.loads(match.group())
+        return None
+    except Exception as e:
+        st.error(f"Erreur extraction contexte: {e}")
+        return None
+
+def filter_with_claude_v2(keywords, site_domain, language_code, claude_api_key, competitors_list=None, business_context=None, site_content=None):
+    """Filtre les keywords avec le contexte business structuré - version améliorée"""
+    try:
+        client = anthropic.Anthropic(api_key=claude_api_key)
+        kw_list = keywords[:500]
+        
+        # Construire la liste des marques à exclure
+        competitor_brands = []
+        if competitors_list:
+            for comp in competitors_list:
+                brand = comp.replace('.be', '').replace('.nl', '').replace('.com', '').replace('.fr', '').replace('www.', '')
+                if brand:
+                    competitor_brands.append(brand)
+        
+        # Langue cible
+        lang_name = "néerlandais" if language_code == "nl" else "français"
+        other_lang = "français" if language_code == "nl" else "néerlandais"
+        
+        # Construire le contexte business
+        context_section = ""
+        if business_context:
+            objectives = business_context.get('business_objectives', [])
+            objectives_str = ', '.join(objectives[:5]) if objectives else 'Non définis'
+            
+            context_section = f"""
+CONTEXTE BUSINESS EXTRAIT DU SITE ET DU KICKOFF:
+- Type de business: {business_context.get('business_type', 'N/A')}
+- Produits/Services: {', '.join(business_context.get('main_products_services', [])[:10])}
+- Cible: {business_context.get('target_audience', 'N/A')}
+- 🎯 OBJECTIFS BUSINESS: {objectives_str}
+- Thèmes pertinents: {', '.join(business_context.get('relevant_themes', [])[:15])}
+- Thèmes hors-sujet: {', '.join(business_context.get('irrelevant_themes', [])[:10])}
+- Type de concurrents: {business_context.get('competitor_type', 'N/A')}
+
+IMPORTANT: Les objectifs business sont prioritaires. Garde tous les keywords qui peuvent contribuer à ces objectifs.
+"""
+        elif site_content:
+            context_section = f"""
+CONTENU DU SITE (extrait):
+{site_content[:3000]}
+"""
+        
+        prompt = f"""Tu es un expert SEO. Filtre cette liste de keywords pour {site_domain}.
+
+{context_section}
+
+LANGUE CIBLE: {lang_name} ({language_code})
+
+KEYWORDS À ANALYSER ({len(kw_list)}):
+{json.dumps(kw_list, ensure_ascii=False)}
+
+MARQUES CONCURRENTES À EXCLURE:
+{json.dumps(competitor_brands, ensure_ascii=False)}
+
+RÈGLES - EXCLURE UNIQUEMENT:
+1. Keywords contenant une marque concurrente listée ci-dessus
+2. Keywords CLAIREMENT dans la mauvaise langue (attention: beaucoup de mots existent dans les deux langues, garde-les!)
+3. Keywords TOTALEMENT hors-sujet par rapport au business (utilise le contexte ci-dessus)
+
+RÈGLES - GARDER (TRÈS IMPORTANT):
+1. TOUS les keywords liés de près ou de loin au business
+2. Keywords transactionnels et informationnels
+3. Keywords ambigus ou dont tu n'es pas sûr → GARDE-LES
+4. Keywords en anglais si pertinents pour le business
+
+⚠️ SOIS EXTRÊMEMENT CONSERVATEUR. Garde 80-90% des keywords minimum.
+En cas de doute, GARDE TOUJOURS le keyword.
+
+JSON uniquement:
+{{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": [...], "wrong_language": [...], "off_topic": [...]}}}}"""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=16000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        match = re.search(r'\{[\s\S]*\}', response.content[0].text)
+        if match:
+            return json.loads(match.group())
+        return {"relevant": keywords, "filtered_out": {}}
+    except Exception as e:
+        st.error(f"Erreur Claude: {e}")
+        return {"relevant": keywords, "filtered_out": {}}
+
 def filter_with_claude(keywords, site_domain, language_code, claude_api_key, competitors_list=None, site_context=None):
-    """Filtre les keywords non pertinents via Claude - version dynamique basée sur le contexte du site"""
+    """Filtre les keywords non pertinents via Claude - version legacy"""
     try:
         client = anthropic.Anthropic(api_key=claude_api_key)
         kw_list = keywords[:500]
@@ -574,6 +707,30 @@ with st.sidebar:
         "Concurrents (1 par ligne)",
         value="vika.be\ndsmkeukens.be\ndovykeukens.be\ndiapal.be\nilwa.be"
     )
+    
+    st.divider()
+    st.markdown("### 📄 Document Kickoff")
+    st.caption("Upload ton document de kickoff pour un filtrage plus précis")
+    
+    kickoff_file = st.file_uploader("Document kickoff", type=['txt', 'pdf', 'docx', 'md'], key="kickoff_upload")
+    kickoff_text = st.text_area("Ou colle les objectifs business ici", height=100, key="kickoff_text", 
+                                 placeholder="Ex: Objectif: augmenter les leads pour les services de gestion de patrimoine...")
+    
+    # Stocker le contenu du kickoff
+    if kickoff_file:
+        try:
+            if kickoff_file.name.endswith('.txt') or kickoff_file.name.endswith('.md'):
+                st.session_state.kickoff_content = kickoff_file.read().decode('utf-8')
+            elif kickoff_file.name.endswith('.pdf'):
+                # Pour PDF, on lit le texte brut (simplifié)
+                st.session_state.kickoff_content = kickoff_file.read().decode('utf-8', errors='ignore')
+            else:
+                st.session_state.kickoff_content = kickoff_file.read().decode('utf-8', errors='ignore')
+            st.success(f"✅ Kickoff chargé ({len(st.session_state.kickoff_content)} caractères)")
+        except Exception as e:
+            st.error(f"Erreur lecture: {e}")
+    elif kickoff_text:
+        st.session_state.kickoff_content = kickoff_text
     
     # Auto-save config on every change
     st.session_state.site = site
@@ -920,8 +1077,10 @@ with tab1:
         
         # ----- ÉTAPE 6 : FILTRAGE -----
         with st.expander("**6️⃣ Filtrage**"):
-            st.info("📖 **Quoi ?** Supprime les keywords avec volume trop faible + filtrage intelligent via Claude (marques concurrentes, hors-sujet, autres langues).\n\n**Pourquoi ?** Nettoyer ta liste pour ne garder que les keywords pertinents et actionnables.")
+            st.info("📖 **Quoi ?** Supprime les keywords avec volume trop faible + filtrage intelligent basé sur l'analyse du site.\n\n**Pourquoi ?** Nettoyer ta liste pour ne garder que les keywords pertinents.")
             
+            # --- FILTRAGE PAR VOLUME (principal) ---
+            st.markdown("### 📊 Filtrage par volume")
             col1, col2 = st.columns(2)
             with col1:
                 min_volume = st.number_input("Volume minimum", value=10, min_value=0, key="min_vol")
@@ -930,48 +1089,151 @@ with tab1:
                     to_remove = (st.session_state.df_master['volume'] < min_volume).sum()
                     st.metric("À supprimer", to_remove)
             
+            if st.button("🗑️ Filtrer par volume", key="btn_filter_vol", use_container_width=True):
+                if 'volume' in st.session_state.df_master.columns:
+                    before = len(st.session_state.df_master)
+                    removed_kws = st.session_state.df_master[st.session_state.df_master['volume'] < min_volume]['keyword'].tolist()
+                    st.session_state.df_master = st.session_state.df_master[
+                        st.session_state.df_master['volume'] >= min_volume
+                    ].reset_index(drop=True)
+                    removed = before - len(st.session_state.df_master)
+                    st.success(f"✅ {removed} supprimés — Reste: {len(st.session_state.df_master)}")
+                    
+                    if removed > 0:
+                        st.markdown("**📋 Exemples supprimés :**")
+                        st.code('\n'.join(removed_kws[:10]))
+            
+            st.divider()
+            
+            # --- ANALYSE DU CONTEXTE BUSINESS ---
+            st.markdown("### 🔍 Analyse du contexte business")
+            st.caption("Scrape le site avec Jina et extrait le contexte business pour un filtrage intelligent")
+            
+            # Afficher si kickoff est chargé
+            if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
+                st.success(f"📄 Document kickoff chargé ({len(st.session_state.kickoff_content)} caractères)")
+            else:
+                st.caption("💡 Tu peux ajouter un document kickoff dans la sidebar pour améliorer le filtrage")
+            
+            if st.button("🌐 Analyser le site client", key="btn_analyze_site", use_container_width=True):
+                progress = st.progress(0, text="Scraping du site avec Jina...")
+                
+                # Scraper le site
+                site_content = analyze_site_context(st.session_state.site)
+                st.session_state.site_content_raw = site_content
+                
+                if not site_content and not st.session_state.get('kickoff_content'):
+                    progress.empty()
+                    st.error("❌ Impossible de scraper le site et pas de kickoff")
+                else:
+                    progress.progress(50, text="Extraction du contexte business...")
+                    
+                    # Extraire le contexte business (avec kickoff si disponible)
+                    kickoff = st.session_state.get('kickoff_content', None)
+                    business_context = extract_business_context(
+                        site_content,
+                        st.session_state.site,
+                        st.session_state.claude_api_key,
+                        kickoff
+                    )
+                    st.session_state.business_context = business_context
+                    
+                    progress.progress(100, text="Terminé!")
+                    progress.empty()
+                    
+                    if business_context:
+                        st.success("✅ Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
+                    else:
+                        st.warning("⚠️ Contexte non extrait, le filtrage utilisera le contenu brut")
+            
+            # Afficher le contexte si disponible
+            if 'business_context' in st.session_state and st.session_state.business_context:
+                ctx = st.session_state.business_context
+                with st.expander("📋 Contexte business extrait (cliquer pour voir)", expanded=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
+                        st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
+                        st.markdown("**Produits/Services:**")
+                        for item in ctx.get('main_products_services', [])[:5]:
+                            st.caption(f"• {item}")
+                        # Objectifs business (du kickoff)
+                        if ctx.get('business_objectives'):
+                            st.markdown("**🎯 Objectifs business:**")
+                            for obj in ctx.get('business_objectives', [])[:5]:
+                                st.caption(f"🎯 {obj}")
+                    with col2:
+                        st.markdown("**Thèmes pertinents:**")
+                        for theme in ctx.get('relevant_themes', [])[:8]:
+                            st.caption(f"✅ {theme}")
+                        st.markdown("**Thèmes hors-sujet:**")
+                        for theme in ctx.get('irrelevant_themes', [])[:5]:
+                            st.caption(f"❌ {theme}")
+            
+            # Afficher le contenu brut scrapé
+            if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
+                with st.expander("📄 Contenu brut scrapé par Jina"):
+                    st.text(st.session_state.site_content_raw[:3000] + "...")
+            
+            st.divider()
+            
+            # --- FILTRAGE CLAUDE ---
+            st.markdown("### 🧹 Filtrage intelligent")
+            
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("🗑️ Filtrer par volume", key="btn_filter_vol", use_container_width=True):
-                    if 'volume' in st.session_state.df_master.columns:
-                        before = len(st.session_state.df_master)
-                        removed_kws = st.session_state.df_master[st.session_state.df_master['volume'] < min_volume]['keyword'].tolist()
-                        st.session_state.df_master = st.session_state.df_master[
-                            st.session_state.df_master['volume'] >= min_volume
-                        ].reset_index(drop=True)
-                        removed = before - len(st.session_state.df_master)
-                        st.success(f"✅ {removed} supprimés — Reste: {len(st.session_state.df_master)}")
-                        
-                        if removed > 0:
-                            st.markdown("**📋 Exemples supprimés :**")
-                            st.code('\n'.join(removed_kws[:10]))
-            with col2:
-                if st.button("🧹 Filtrage Claude (marques, etc.)", key="btn_filter_claude", use_container_width=True):
+                if st.button("👁️ Preview filtrage", key="btn_preview_claude", use_container_width=True):
                     if len(st.session_state.df_master) == 0:
-                        st.warning("Pas de keywords à filtrer")
+                        st.warning("Pas de keywords")
+                    elif 'business_context' not in st.session_state:
+                        st.warning("⚠️ Analyse d'abord le site client!")
                     else:
                         keywords = st.session_state.df_master['keyword'].tolist()
-                        progress = st.progress(0, text="Scraping du site client avec Jina...")
+                        progress = st.progress(0, text="Filtrage par Claude...")
                         
-                        # Scraper le site pour comprendre le business
-                        site_context = analyze_site_context(st.session_state.site)
+                        # Utiliser le contexte business structuré
+                        ctx = st.session_state.business_context
+                        site_content = st.session_state.get('site_content_raw', '')
                         
-                        progress.progress(30, text="Analyse par Claude...")
-                        
-                        result = filter_with_claude(
+                        result = filter_with_claude_v2(
                             keywords,
                             st.session_state.site,
                             st.session_state.language_code,
                             st.session_state.claude_api_key,
                             st.session_state.competitors,
-                            site_context  # Passer le contexte du site
+                            ctx,
+                            site_content
                         )
                         progress.progress(100, text="Terminé!")
-                        time.sleep(0.3)
                         progress.empty()
                         
-                        relevant = result.get('relevant', keywords)
+                        st.session_state.claude_filter_preview = result
+                        
                         filtered_out = result.get('filtered_out', {})
+                        relevant = result.get('relevant', [])
+                        total_filtered = len(keywords) - len(relevant)
+                        
+                        st.info(f"📋 **Preview**: {total_filtered} keywords seraient supprimés sur {len(keywords)}")
+                        
+                        cat_labels = {
+                            'competitor_brands': '🏷️ Marques concurrentes',
+                            'wrong_language': '🌍 Mauvaise langue',
+                            'locations': '📍 Villes/Locations',
+                            'off_topic': '❌ Hors-sujet'
+                        }
+                        for cat, items in filtered_out.items():
+                            if items and len(items) > 0:
+                                label = cat_labels.get(cat, cat)
+                                with st.expander(f"{label} ({len(items)})"):
+                                    st.code('\n'.join(items[:50]))
+            
+            with col2:
+                if st.button("✅ Appliquer le filtrage", key="btn_apply_claude", use_container_width=True):
+                    if 'claude_filter_preview' not in st.session_state:
+                        st.warning("Lance d'abord le Preview!")
+                    else:
+                        result = st.session_state.claude_filter_preview
+                        relevant = result.get('relevant', st.session_state.df_master['keyword'].tolist())
                         
                         before = len(st.session_state.df_master)
                         st.session_state.df_master = st.session_state.df_master[
@@ -980,22 +1242,7 @@ with tab1:
                         removed = before - len(st.session_state.df_master)
                         
                         st.success(f"✅ {removed} filtrés — Reste: {len(st.session_state.df_master)}")
-                        
-                        # Détails par catégorie
-                        if filtered_out:
-                            st.markdown("**📋 Filtrés par catégorie :**")
-                            cat_labels = {
-                                'competitor_brands': '🏷️ Marques concurrentes',
-                                'wrong_language': '🌍 Mauvaise langue',
-                                'locations': '📍 Villes/Locations',
-                                'off_topic': '❌ Hors-sujet',
-                                'competitors': '🏷️ Concurrents',
-                                'other': '❓ Autres'
-                            }
-                            for cat, items in filtered_out.items():
-                                if items and len(items) > 0:
-                                    label = cat_labels.get(cat, cat)
-                                    st.caption(f"**{label}** ({len(items)}): {', '.join(items[:8])}{'...' if len(items) > 8 else ''}")
+                        del st.session_state.claude_filter_preview
         
         # ----- ÉTAPE 6b : CATÉGORISATION (E1) -----
         with st.expander("**6️⃣b Catégorisation Claude**"):
