@@ -346,8 +346,20 @@ Réponds UNIQUEMENT en JSON: {{"keywords": ["kw1", "kw2", ...]}}"""
         st.error(f"Erreur Claude: {e}")
         return []
 
-def filter_with_claude(keywords, site_domain, language_code, claude_api_key, competitors_list=None):
-    """Filtre les keywords non pertinents via Claude - version améliorée"""
+def analyze_site_context(site_domain, jina_key=None):
+    """Analyse le site client avec Jina pour extraire le contexte business"""
+    site_url = f"https://www.{site_domain.replace('www.', '')}"
+    content = fetch_page_with_jina(site_url, jina_key)
+    
+    if not content:
+        # Essayer sans www
+        site_url = f"https://{site_domain.replace('www.', '')}"
+        content = fetch_page_with_jina(site_url, jina_key)
+    
+    return content
+
+def filter_with_claude(keywords, site_domain, language_code, claude_api_key, competitors_list=None, site_context=None):
+    """Filtre les keywords non pertinents via Claude - version dynamique basée sur le contexte du site"""
     try:
         client = anthropic.Anthropic(api_key=claude_api_key)
         kw_list = keywords[:500]
@@ -358,17 +370,35 @@ def filter_with_claude(keywords, site_domain, language_code, claude_api_key, com
             for comp in competitors_list:
                 # Extraire le nom de marque du domaine (ex: vika.be -> vika)
                 brand = comp.replace('.be', '').replace('.nl', '').replace('.com', '').replace('.fr', '').replace('www.', '')
-                competitor_brands.append(brand)
+                if brand:
+                    competitor_brands.append(brand)
         
         # Langue cible en texte clair
         lang_name = "néerlandais" if language_code == "nl" else "français"
         other_lang = "français" if language_code == "nl" else "néerlandais"
         
+        # Contexte du site (si disponible)
+        context_section = ""
+        if site_context:
+            context_section = f"""
+CONTENU DU SITE CLIENT (extrait via scraping):
+{site_context[:4000]}
+
+Utilise ce contenu pour comprendre:
+- Quel est le business du client (produits/services vendus)
+- Quels thèmes sont pertinents pour ce site
+- Quel vocabulaire est utilisé
+"""
+        else:
+            context_section = f"""
+NOTE: Le contenu du site n'a pas pu être récupéré. Base-toi uniquement sur le nom de domaine {site_domain} pour deviner le business.
+"""
+        
         prompt = f"""Tu es un expert SEO. Tu dois filtrer une liste de keywords pour le site {site_domain}.
 
-CONTEXTE:
-- Langue cible: {lang_name} ({language_code})
-- Le site vend des cuisines sur mesure en Belgique
+{context_section}
+
+LANGUE CIBLE: {lang_name} ({language_code})
 
 LISTE DES KEYWORDS À ANALYSER:
 {json.dumps(kw_list, ensure_ascii=False)}
@@ -377,21 +407,22 @@ MARQUES CONCURRENTES À EXCLURE (extraites des domaines concurrents):
 {json.dumps(competitor_brands, ensure_ascii=False)}
 
 RÈGLES DE FILTRAGE - EXCLURE:
-1. **Marques concurrentes**: Tout keyword contenant une marque concurrente listée ci-dessus (ex: "vika keukens", "dovy keuken", "eggo cuisine")
-2. **Grandes marques retail**: ikea, leroy merlin, brico, gamma, hubo, action, aldi, lidl, colruyt
-3. **Marques cuisine connues**: schmidt, cuisinella, mobalpa, hygena, lapeyre, darty, but, conforama, ixina, kvik
-4. **Mauvaise langue**: Keywords en {other_lang} alors que la cible est {lang_name}
-5. **Villes/régions spécifiques**: Keywords avec noms de villes (bruxelles, antwerpen, gent, liège, etc.) SAUF si très génériques
-6. **Hors-sujet évident**: Keywords sans rapport avec les cuisines/intérieur
+1. **Marques concurrentes**: Tout keyword contenant une marque concurrente listée ci-dessus
+2. **Grandes marques retail connues**: ikea, leroy merlin, brico, gamma, hubo, action, aldi, lidl, colruyt, amazon, bol.com, coolblue
+3. **Mauvaise langue**: Keywords en {other_lang} alors que la cible est {lang_name}. Attention: certains mots peuvent exister dans les deux langues, dans ce cas GARDE-les.
+4. **Villes/régions trop spécifiques**: Keywords avec noms de villes belges/françaises/néerlandaises SAUF si le keyword reste pertinent sans la ville
+5. **Hors-sujet évident**: Keywords qui n'ont CLAIREMENT aucun rapport avec le business du site (basé sur le contenu scrapé)
 
-RÈGLES DE FILTRAGE - GARDER:
-1. Keywords génériques sur les cuisines (keuken, cuisine, aanrecht, werkblad, etc.)
-2. Keywords transactionnels (kopen, bestellen, prijs, prix, acheter)
-3. Keywords informationnels (hoe, wat, welke, comment, quel)
-4. Keywords sur les matériaux, styles, dimensions
-5. Keywords sur l'installation, rénovation, aménagement
+RÈGLES DE FILTRAGE - GARDER (IMPORTANT):
+1. Keywords génériques liés au business du client
+2. Keywords transactionnels (kopen, bestellen, prijs, prix, acheter, commander)
+3. Keywords informationnels (hoe, wat, welke, comment, quel, pourquoi)
+4. Keywords sur les produits/services même indirectement liés
+5. Keywords longue traîne pertinents
 
-IMPORTANT: Sois CONSERVATEUR dans le filtrage. En cas de doute, GARDE le keyword.
+⚠️ TRÈS IMPORTANT: Sois TRÈS CONSERVATEUR. En cas de doute, GARDE TOUJOURS le keyword. 
+Il vaut mieux garder un keyword potentiellement non-pertinent que supprimer un keyword pertinent.
+Ne filtre QUE les keywords qui sont CLAIREMENT hors-sujet ou brandés concurrents.
 
 Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
 {{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": ["..."], "wrong_language": ["..."], "locations": ["..."], "off_topic": ["..."]}}}}"""
@@ -920,14 +951,20 @@ with tab1:
                         st.warning("Pas de keywords à filtrer")
                     else:
                         keywords = st.session_state.df_master['keyword'].tolist()
-                        progress = st.progress(0, text="Analyse par Claude...")
+                        progress = st.progress(0, text="Scraping du site client avec Jina...")
+                        
+                        # Scraper le site pour comprendre le business
+                        site_context = analyze_site_context(st.session_state.site)
+                        
+                        progress.progress(30, text="Analyse par Claude...")
                         
                         result = filter_with_claude(
                             keywords,
                             st.session_state.site,
                             st.session_state.language_code,
                             st.session_state.claude_api_key,
-                            st.session_state.competitors  # Passer la liste des concurrents
+                            st.session_state.competitors,
+                            site_context  # Passer le contexte du site
                         )
                         progress.progress(100, text="Terminé!")
                         time.sleep(0.3)
