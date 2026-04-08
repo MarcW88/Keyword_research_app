@@ -783,67 +783,6 @@ with tab1:
                         else:
                             st.warning("Aucun related keyword trouvé")
         
-        # ----- ÉTAPE 4b : THÉMATIQUES SPÉCIFIQUES (C4) -----
-        with st.expander("**4️⃣b Thématiques Spécifiques**"):
-            st.info("📖 **Quoi ?** Donne des thèmes → Claude génère des keywords ciblés pour chaque thème.\n\n**Pourquoi ?** Explorer des angles spécifiques que l'extraction automatique ne couvre pas.")
-            
-            themes_input = st.text_area("Thématiques (1 par ligne)", value="", key="themes_input", height=100)
-            col1, col2 = st.columns(2)
-            with col1:
-                keywords_per_theme = st.number_input("Keywords par thème", value=30, min_value=10, max_value=100, key="kw_per_theme")
-            with col2:
-                themes_list = [t.strip() for t in themes_input.split('\n') if t.strip()]
-                st.metric("Thèmes", len(themes_list))
-            
-            if st.button("🎯 Générer par thématiques", key="btn_themes", use_container_width=True):
-                if not themes_list:
-                    st.warning("Ajoute au moins un thème")
-                else:
-                    progress = st.progress(0, text="Génération par Claude...")
-                    
-                    result = generate_theme_keywords(
-                        themes_list,
-                        keywords_per_theme,
-                        st.session_state.language_code,
-                        st.session_state.claude_api_key
-                    )
-                    progress.progress(50, text="Validation des volumes...")
-                    
-                    all_theme_kw = []
-                    for theme, kws in result.items():
-                        all_theme_kw.extend([kw for kw in kws if isinstance(kw, str)])
-                    
-                    if all_theme_kw:
-                        # Valider volumes
-                        vol_data = fetch_volumes(
-                            all_theme_kw,
-                            st.session_state.dataforseo_login,
-                            st.session_state.dataforseo_password,
-                            st.session_state.location_code,
-                            st.session_state.language_code
-                        )
-                        valid = [kw for kw in all_theme_kw if vol_data.get(kw, {}).get('volume', 0) >= 10]
-                        
-                        progress.progress(100, text="Terminé!")
-                        time.sleep(0.3)
-                        progress.empty()
-                        
-                        if valid:
-                            new_df = pd.DataFrame({'keyword': valid, 'source': 'theme'})
-                            before = len(st.session_state.df_master)
-                            st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                            added = len(st.session_state.df_master) - before
-                            
-                            st.success(f"✅ {len(all_theme_kw)} générés → {len(valid)} avec volume | {added} nouveaux")
-                            st.markdown("**📋 Par thème :**")
-                            for theme, kws in result.items():
-                                st.caption(f"**{theme}**: {len(kws)} keywords")
-                        else:
-                            st.warning("Aucun keyword avec volume suffisant")
-                    else:
-                        progress.empty()
-                        st.warning("Aucun keyword généré")
-        
         # ----- ÉTAPE 5 : VOLUMES -----
         with st.expander("**5️⃣ Récupérer Volumes**"):
             st.info("📖 **Quoi ?** Récupère le volume de recherche mensuel + CPC pour chaque keyword via Google Ads API.\n\n**Pourquoi ?** Prioriser les keywords avec du potentiel de trafic réel.")
@@ -1155,34 +1094,294 @@ with tab1:
 # =============================================================================
 with tab2:
     st.markdown("""
-    ### Compléter une analyse existante
-    **Workflow :** Charger fichier → Ajouter keywords → Volumes nouveaux → SERP nouveaux → Export
+    ### 🔄 Compléter une analyse existante
+    **Workflow :** B1 (charger fichier) → C2/C4 (nouveaux concurrents ou thématiques) → D1 (volumes) → D2 (filtrage) → E1 (catégorisation) → F (SERP) → G (export)
     """)
     
-    uploaded = st.file_uploader("📂 Charger fichier existant", type=['xlsx'])
-    if uploaded:
-        df_loaded = pd.read_excel(uploaded)
-        df_loaded.columns = df_loaded.columns.str.strip()
-        if 'Keyword' in df_loaded.columns:
-            df_loaded = df_loaded.rename(columns={'Keyword': 'keyword'})
-        st.session_state.df_master = df_loaded
-        st.success(f"✅ {len(df_loaded)} keywords chargés")
-        st.dataframe(df_loaded.head(10))
+    # ----- B1 : CHARGER FICHIER EXISTANT -----
+    with st.expander("**B1 — Charger fichier existant**", expanded=True):
+        st.info("📖 Charge ton fichier Excel d'une analyse précédente pour y ajouter des keywords.")
+        
+        uploaded = st.file_uploader("📂 Charger fichier existant", type=['xlsx'], key="upload_complement")
+        if uploaded:
+            df_loaded = pd.read_excel(uploaded)
+            df_loaded.columns = df_loaded.columns.str.strip()
+            if 'Keyword' in df_loaded.columns:
+                df_loaded = df_loaded.rename(columns={'Keyword': 'keyword'})
+            st.session_state.df_master = df_loaded
+            st.success(f"✅ {len(df_loaded)} keywords chargés")
+            
+            # Stats du fichier chargé
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Keywords", len(df_loaded))
+            with col2:
+                if 'volume' in df_loaded.columns:
+                    st.metric("Volume total", f"{df_loaded['volume'].sum():,.0f}")
+            with col3:
+                if 'category' in df_loaded.columns:
+                    cats = df_loaded['category'].nunique()
+                    st.metric("Catégories", cats)
+            
+            st.dataframe(df_loaded.head(5), use_container_width=True, hide_index=True)
     
+    # ----- C2 : NOUVEAUX CONCURRENTS -----
+    with st.expander("**C2 — Extraction nouveaux concurrents**"):
+        st.info("📖 Ajoute des keywords depuis de nouveaux concurrents que tu n'avais pas analysés avant.")
+        
+        new_competitors = st.text_area("Nouveaux concurrents (1 par ligne)", key="new_comp_tab2", height=80)
+        extract_limit_c2 = st.number_input("Keywords par concurrent", value=100, min_value=10, max_value=500, key="extract_c2")
+        
+        if st.button("🔍 Extraire nouveaux concurrents", key="btn_extract_new_comp", use_container_width=True):
+            comp_list = [c.strip() for c in new_competitors.split('\n') if c.strip()]
+            if not comp_list:
+                st.warning("Ajoute au moins un concurrent")
+            else:
+                all_kws = []
+                progress = st.progress(0)
+                for i, comp in enumerate(comp_list):
+                    progress.progress((i + 1) / len(comp_list), text=f"📥 {comp}...")
+                    kws = extract_keywords_from_site(
+                        comp,
+                        st.session_state.dataforseo_login,
+                        st.session_state.dataforseo_password,
+                        st.session_state.location_code,
+                        st.session_state.language_code,
+                        extract_limit_c2
+                    )
+                    all_kws.extend([{'keyword': kw, 'source': f'competitor:{comp}'} for kw in kws])
+                    time.sleep(0.5)
+                progress.empty()
+                
+                if all_kws:
+                    new_df = pd.DataFrame(all_kws)
+                    before = len(st.session_state.df_master)
+                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+                    added = len(st.session_state.df_master) - before
+                    st.success(f"✅ {len(all_kws)} extraits | {added} nouveaux ajoutés")
+    
+    # ----- C4 : THÉMATIQUES SPÉCIFIQUES -----
+    with st.expander("**C4 — Thématiques spécifiques (Claude)**"):
+        st.info("📖 **Quoi ?** Donne des thèmes que tu veux explorer → Claude génère des keywords ciblés pour chaque thème.\n\n**Pourquoi ?** Ajouter des angles spécifiques que l'analyse initiale n'a pas couverts.")
+        
+        themes_input = st.text_area("Thématiques à explorer (1 par ligne)", value="", key="themes_input_tab2", height=100,
+                                     placeholder="Ex:\nkeuken renovatie\nbadkamer inrichting\nmaatwerk interieur")
+        col1, col2 = st.columns(2)
+        with col1:
+            keywords_per_theme = st.number_input("Keywords par thème", value=30, min_value=10, max_value=100, key="kw_per_theme_tab2")
+        with col2:
+            themes_list = [t.strip() for t in themes_input.split('\n') if t.strip()]
+            st.metric("Thèmes", len(themes_list))
+        
+        if st.button("🎯 Générer par thématiques", key="btn_themes_tab2", use_container_width=True):
+            if not themes_list:
+                st.warning("Ajoute au moins un thème")
+            else:
+                progress = st.progress(0, text="Génération par Claude...")
+                
+                result = generate_theme_keywords(
+                    themes_list,
+                    keywords_per_theme,
+                    st.session_state.language_code,
+                    st.session_state.claude_api_key
+                )
+                progress.progress(50, text="Validation des volumes...")
+                
+                all_theme_kw = []
+                for theme, kws in result.items():
+                    all_theme_kw.extend([kw for kw in kws if isinstance(kw, str)])
+                
+                if all_theme_kw:
+                    # Valider volumes
+                    vol_data = fetch_volumes(
+                        all_theme_kw,
+                        st.session_state.dataforseo_login,
+                        st.session_state.dataforseo_password,
+                        st.session_state.location_code,
+                        st.session_state.language_code
+                    )
+                    valid = [kw for kw in all_theme_kw if vol_data.get(kw, {}).get('volume', 0) >= 10]
+                    
+                    progress.progress(100, text="Terminé!")
+                    time.sleep(0.3)
+                    progress.empty()
+                    
+                    if valid:
+                        new_df = pd.DataFrame({'keyword': valid, 'source': 'theme'})
+                        before = len(st.session_state.df_master)
+                        st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+                        added = len(st.session_state.df_master) - before
+                        
+                        st.success(f"✅ {len(all_theme_kw)} générés → {len(valid)} avec volume | {added} nouveaux")
+                        st.markdown("**📋 Par thème :**")
+                        for theme, kws in result.items():
+                            st.caption(f"**{theme}**: {len(kws)} keywords")
+                    else:
+                        st.warning("Aucun keyword avec volume suffisant")
+                else:
+                    progress.empty()
+                    st.warning("Aucun keyword généré")
+    
+    # ----- D1 : VOLUMES NOUVEAUX -----
+    with st.expander("**D1 — Volumes (nouveaux uniquement)**"):
+        st.info("📖 Récupère les volumes uniquement pour les keywords qui n'en ont pas encore.")
+        
+        missing_vol = 0
+        if len(st.session_state.df_master) > 0 and 'volume' in st.session_state.df_master.columns:
+            missing_vol = st.session_state.df_master['volume'].isna().sum() + (st.session_state.df_master['volume'] == 0).sum()
+        else:
+            missing_vol = len(st.session_state.df_master)
+        
+        st.metric("Keywords sans volume", missing_vol)
+        
+        if st.button("📊 Récupérer Volumes manquants", key="btn_vol_tab2", use_container_width=True):
+            if missing_vol == 0:
+                st.success("✅ Tous les keywords ont déjà un volume")
+            else:
+                # Filtrer ceux sans volume
+                if 'volume' in st.session_state.df_master.columns:
+                    kws_missing = st.session_state.df_master[
+                        st.session_state.df_master['volume'].isna() | (st.session_state.df_master['volume'] == 0)
+                    ]['keyword'].tolist()
+                else:
+                    kws_missing = st.session_state.df_master['keyword'].tolist()
+                
+                vol_data = fetch_volumes(
+                    kws_missing,
+                    st.session_state.dataforseo_login,
+                    st.session_state.dataforseo_password,
+                    st.session_state.location_code,
+                    st.session_state.language_code
+                )
+                
+                if 'volume' not in st.session_state.df_master.columns:
+                    st.session_state.df_master['volume'] = 0
+                
+                for idx, row in st.session_state.df_master.iterrows():
+                    if row['keyword'] in kws_missing:
+                        st.session_state.df_master.at[idx, 'volume'] = vol_data.get(row['keyword'], {}).get('volume', 0)
+                        st.session_state.df_master.at[idx, 'cpc'] = vol_data.get(row['keyword'], {}).get('cpc', 0)
+                
+                updated = sum(1 for kw in kws_missing if vol_data.get(kw, {}).get('volume', 0) > 0)
+                st.success(f"✅ {updated}/{len(kws_missing)} volumes mis à jour")
+    
+    # ----- E1 : CATÉGORISATION NOUVEAUX -----
+    with st.expander("**E1 — Catégoriser les nouveaux**"):
+        st.info("📖 Catégorise uniquement les keywords qui n'ont pas encore de catégorie.")
+        
+        uncategorized = 0
+        if len(st.session_state.df_master) > 0:
+            if 'category' in st.session_state.df_master.columns:
+                uncategorized = st.session_state.df_master['category'].isna().sum() + (st.session_state.df_master['category'] == '').sum()
+            else:
+                uncategorized = len(st.session_state.df_master)
+        
+        st.metric("Keywords non catégorisés", uncategorized)
+        
+        if st.button("🏷️ Catégoriser nouveaux", key="btn_cat_tab2", use_container_width=True):
+            if uncategorized == 0:
+                st.success("✅ Tous les keywords sont déjà catégorisés")
+            else:
+                if 'category' in st.session_state.df_master.columns:
+                    kws_to_cat = st.session_state.df_master[
+                        st.session_state.df_master['category'].isna() | (st.session_state.df_master['category'] == '')
+                    ]['keyword'].tolist()
+                else:
+                    kws_to_cat = st.session_state.df_master['keyword'].tolist()
+                
+                progress = st.progress(0, text="Catégorisation Claude...")
+                categories = categorize_with_claude(kws_to_cat, st.session_state.site, st.session_state.claude_api_key)
+                progress.progress(100)
+                progress.empty()
+                
+                if categories:
+                    kw_cat_map = {}
+                    for cat, kws in categories.items():
+                        for kw in kws:
+                            kw_str = kw if isinstance(kw, str) else kw.get('kw', '')
+                            kw_cat_map[kw_str.lower()] = cat
+                    
+                    if 'category' not in st.session_state.df_master.columns:
+                        st.session_state.df_master['category'] = ''
+                    
+                    for idx, row in st.session_state.df_master.iterrows():
+                        cat = kw_cat_map.get(row['keyword'].lower())
+                        if cat:
+                            st.session_state.df_master.at[idx, 'category'] = cat
+                    
+                    st.success(f"✅ {len(kw_cat_map)} keywords catégorisés")
+    
+    # ----- F : SERP NOUVEAUX -----
+    with st.expander("**F — SERP (nouveaux uniquement)**"):
+        st.info("📖 Analyse SERP uniquement pour les keywords qui n'ont pas encore de position.")
+        
+        needs_serp = 0
+        if len(st.session_state.df_master) > 0:
+            if 'client_pos' in st.session_state.df_master.columns:
+                needs_serp = st.session_state.df_master['client_pos'].isna().sum()
+            else:
+                needs_serp = len(st.session_state.df_master)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Keywords sans SERP", needs_serp)
+        with col2:
+            st.metric("Coût estimé", f"~€{needs_serp * 0.0075:.2f}")
+        
+        if st.button("🎯 Analyser SERP nouveaux", key="btn_serp_tab2", use_container_width=True):
+            if needs_serp == 0:
+                st.success("✅ Tous les keywords ont déjà des données SERP")
+            else:
+                if 'client_pos' in st.session_state.df_master.columns:
+                    kws_to_scan = st.session_state.df_master[
+                        st.session_state.df_master['client_pos'].isna()
+                    ]['keyword'].tolist()
+                else:
+                    kws_to_scan = st.session_state.df_master['keyword'].tolist()
+                
+                results = []
+                progress = st.progress(0)
+                for i, kw in enumerate(kws_to_scan):
+                    progress.progress((i + 1) / len(kws_to_scan), text=f"🔍 {kw[:30]}...")
+                    result = analyze_serp(
+                        kw,
+                        st.session_state.dataforseo_login,
+                        st.session_state.dataforseo_password,
+                        st.session_state.location_code,
+                        st.session_state.language_code,
+                        st.session_state.client_domains,
+                        st.session_state.competitors
+                    )
+                    results.append(result)
+                    time.sleep(1)
+                progress.empty()
+                
+                df_serp = pd.DataFrame(results)
+                serp_cols = [c for c in df_serp.columns if c != 'keyword']
+                for col in serp_cols:
+                    if col not in st.session_state.df_master.columns:
+                        st.session_state.df_master[col] = None
+                    for idx, row in st.session_state.df_master.iterrows():
+                        if row['keyword'] in df_serp['keyword'].values:
+                            val = df_serp[df_serp['keyword'] == row['keyword']][col].values[0]
+                            st.session_state.df_master.at[idx, col] = val
+                
+                client_ranked = df_serp['client_pos'].notna().sum()
+                st.success(f"✅ SERP terminé — Client ranké: {client_ranked}/{len(kws_to_scan)}")
+    
+    # ----- G : EXPORT -----
     st.divider()
-    
-    # Ajouter des keywords manuellement
-    st.subheader("➕ Ajouter des keywords")
-    new_keywords = st.text_area("Keywords à ajouter (1 par ligne)")
-    if st.button("Ajouter au master"):
-        if new_keywords:
-            kws = [kw.strip() for kw in new_keywords.split('\n') if kw.strip()]
-            existing = set(st.session_state.df_master['keyword'].str.lower()) if len(st.session_state.df_master) > 0 else set()
-            new_kws = [kw for kw in kws if kw.lower() not in existing]
-            if new_kws:
-                new_df = pd.DataFrame({'keyword': new_kws, 'source': 'manual'})
-                st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).reset_index(drop=True)
-                st.success(f"✅ {len(new_kws)} keywords ajoutés")
+    if len(st.session_state.df_master) > 0:
+        st.subheader("📥 Export")
+        buffer = BytesIO()
+        st.session_state.df_master.to_excel(buffer, index=False)
+        st.download_button(
+            "⬇️ Télécharger Excel (mise à jour)",
+            data=buffer.getvalue(),
+            file_name=f"Keywords_{st.session_state.site.replace('.', '_')}_updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # =============================================================================
 # TAB 3 — OUTILS
