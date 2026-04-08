@@ -20,8 +20,9 @@ st.set_page_config(
 # API Keys from Streamlit secrets
 DATAFORSEO_LOGIN = st.secrets.get("DATAFORSEO_LOGIN", "")
 DATAFORSEO_PASSWORD = st.secrets.get("DATAFORSEO_PASSWORD", "")
-# Claude key split in 3 parts
+# Claude key split in 3 parts for security
 CLAUDE_API_KEY = st.secrets.get("CLAUDE_API_KEY_1", "") + st.secrets.get("CLAUDE_API_KEY_2", "") + st.secrets.get("CLAUDE_API_KEY_3", "")
+JINA_API_KEY = st.secrets.get("JINA_API_KEY", "")
 
 # =============================================================================
 # CUSTOM CSS — SEMACTIC STYLE
