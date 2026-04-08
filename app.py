@@ -11,6 +11,14 @@ import re
 from io import BytesIO
 import anthropic
 
+# Détection de langue
+try:
+    from langdetect import detect, DetectorFactory
+    DetectorFactory.seed = 0  # Pour des résultats reproductibles
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    LANGDETECT_AVAILABLE = False
+
 st.set_page_config(
     page_title="Keyword Research",
     page_icon="🔍",
@@ -346,6 +354,44 @@ Réponds UNIQUEMENT en JSON: {{"keywords": ["kw1", "kw2", ...]}}"""
         st.error(f"Erreur Claude: {e}")
         return []
 
+def detect_keyword_language(keyword):
+    """Détecte la langue d'un keyword avec langdetect"""
+    if not LANGDETECT_AVAILABLE:
+        return None
+    try:
+        # langdetect retourne 'nl', 'fr', 'en', 'de', etc.
+        lang = detect(keyword)
+        return lang
+    except:
+        return None
+
+def filter_by_language(keywords, target_lang_code):
+    """
+    Filtre les keywords par langue de manière programmatique.
+    target_lang_code: 'nl' pour néerlandais, 'fr' pour français
+    Retourne: (keywords_ok, keywords_wrong_lang)
+    """
+    if not LANGDETECT_AVAILABLE:
+        return keywords, []
+    
+    keywords_ok = []
+    keywords_wrong_lang = []
+    
+    for kw in keywords:
+        try:
+            detected = detect(kw)
+            # Accepter la langue cible + anglais (souvent utilisé dans le business)
+            # Aussi accepter si détection incertaine (keywords courts)
+            if detected == target_lang_code or detected == 'en' or len(kw.split()) <= 2:
+                keywords_ok.append(kw)
+            else:
+                keywords_wrong_lang.append((kw, detected))
+        except:
+            # En cas d'erreur de détection, garder le keyword
+            keywords_ok.append(kw)
+    
+    return keywords_ok, keywords_wrong_lang
+
 def analyze_site_context(site_domain, jina_key=None):
     """Analyse le site client avec Jina pour extraire le contexte business"""
     site_url = f"https://www.{site_domain.replace('www.', '')}"
@@ -463,8 +509,9 @@ MARQUES CONCURRENTES À EXCLURE:
 
 RÈGLES - EXCLURE UNIQUEMENT:
 1. Keywords contenant une marque concurrente listée ci-dessus
-2. Keywords CLAIREMENT dans la mauvaise langue (attention: beaucoup de mots existent dans les deux langues, garde-les!)
-3. Keywords TOTALEMENT hors-sujet par rapport au business (utilise le contexte ci-dessus)
+2. Keywords TOTALEMENT hors-sujet par rapport au business (utilise le contexte ci-dessus)
+
+NOTE: Ne filtre PAS par langue - c'est géré séparément par un outil de détection automatique.
 
 RÈGLES - GARDER (TRÈS IMPORTANT):
 1. TOUS les keywords liés de près ou de loin au business
@@ -472,11 +519,11 @@ RÈGLES - GARDER (TRÈS IMPORTANT):
 3. Keywords ambigus ou dont tu n'es pas sûr → GARDE-LES
 4. Keywords en anglais si pertinents pour le business
 
-⚠️ SOIS EXTRÊMEMENT CONSERVATEUR. Garde 80-90% des keywords minimum.
+⚠️ SOIS EXTRÊMEMENT CONSERVATEUR. Garde 90%+ des keywords.
 En cas de doute, GARDE TOUJOURS le keyword.
 
 JSON uniquement:
-{{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": [...], "wrong_language": [...], "off_topic": [...]}}}}"""
+{{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": [...], "off_topic": [...]}}}}"""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -1177,8 +1224,54 @@ with tab1:
             
             st.divider()
             
+            # --- FILTRAGE PAR LANGUE (programmatique) ---
+            st.markdown("### 🌍 Filtrage par langue")
+            if LANGDETECT_AVAILABLE:
+                st.caption("Détection automatique de la langue avec langdetect (plus fiable que Claude)")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔍 Analyser les langues", key="btn_analyze_lang", use_container_width=True):
+                        if len(st.session_state.df_master) == 0:
+                            st.warning("Pas de keywords")
+                        else:
+                            keywords = st.session_state.df_master['keyword'].tolist()
+                            target_lang = st.session_state.language_code  # 'nl' ou 'fr'
+                            
+                            keywords_ok, keywords_wrong = filter_by_language(keywords, target_lang)
+                            
+                            st.session_state.lang_filter_preview = {
+                                'ok': keywords_ok,
+                                'wrong': keywords_wrong
+                            }
+                            
+                            st.info(f"📋 **Analyse**: {len(keywords_ok)} OK | {len(keywords_wrong)} mauvaise langue détectée")
+                            
+                            if keywords_wrong:
+                                with st.expander(f"🌍 Mauvaise langue ({len(keywords_wrong)})", expanded=True):
+                                    for kw, detected_lang in keywords_wrong[:50]:
+                                        st.caption(f"❌ `{kw}` → détecté: **{detected_lang}** (cible: {target_lang})")
+                
+                with col2:
+                    if st.button("🗑️ Supprimer mauvaise langue", key="btn_remove_lang", use_container_width=True):
+                        if 'lang_filter_preview' not in st.session_state:
+                            st.warning("Lance d'abord l'analyse des langues!")
+                        else:
+                            keywords_ok = st.session_state.lang_filter_preview['ok']
+                            before = len(st.session_state.df_master)
+                            st.session_state.df_master = st.session_state.df_master[
+                                st.session_state.df_master['keyword'].isin(keywords_ok)
+                            ].reset_index(drop=True)
+                            removed = before - len(st.session_state.df_master)
+                            st.success(f"✅ {removed} supprimés — Reste: {len(st.session_state.df_master)}")
+                            del st.session_state.lang_filter_preview
+            else:
+                st.warning("⚠️ langdetect non installé. Installe avec: `pip install langdetect`")
+            
+            st.divider()
+            
             # --- FILTRAGE CLAUDE ---
-            st.markdown("### 🧹 Filtrage intelligent")
+            st.markdown("### 🧹 Filtrage intelligent (marques, hors-sujet)")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1213,8 +1306,15 @@ with tab1:
                         relevant = result.get('relevant', [])
                         total_filtered = len(keywords) - len(relevant)
                         
-                        st.info(f"📋 **Preview**: {total_filtered} keywords seraient supprimés sur {len(keywords)}")
+                        st.info(f"📋 **Preview**: {total_filtered} keywords seraient supprimés sur {len(keywords)} | **{len(relevant)} gardés**")
                         
+                        # Afficher ce qui est GARDÉ
+                        with st.expander(f"✅ Keywords GARDÉS ({len(relevant)})", expanded=True):
+                            st.code('\n'.join(relevant[:100]))
+                            if len(relevant) > 100:
+                                st.caption(f"... et {len(relevant) - 100} autres")
+                        
+                        # Afficher ce qui est filtré par catégorie
                         cat_labels = {
                             'competitor_brands': '🏷️ Marques concurrentes',
                             'wrong_language': '🌍 Mauvaise langue',
