@@ -719,8 +719,10 @@ with tab1:
             st.caption(f"📊 Seeds estimés: ~{total_seeds} | Related estimés: ~{total_seeds * related_per_keyword} | Coût: ~€{total_seeds * 0.005:.2f}")
             
             if st.button("🔗 Lancer expansion", key="btn_expansion", use_container_width=True):
-                if len(st.session_state.df_master) == 0 or 'volume' not in st.session_state.df_master.columns:
-                    st.warning("Lance d'abord l'extraction et les volumes")
+                if len(st.session_state.df_master) == 0:
+                    st.warning("Lance d'abord l'extraction (étapes 1-3)")
+                elif 'volume' not in st.session_state.df_master.columns:
+                    st.warning("Lance d'abord l'étape 5 (Volumes) pour avoir les données de volume")
                 else:
                     df_with_vol = st.session_state.df_master[st.session_state.df_master['volume'] > 0].copy()
                     
@@ -801,33 +803,45 @@ with tab1:
                 if len(st.session_state.df_master) == 0:
                     st.warning("Pas de keywords — lance d'abord l'extraction")
                 else:
-                    keywords = st.session_state.df_master['keyword'].tolist()
-                    status = st.empty()
-                    status.text(f"📊 Récupération volumes pour {len(keywords)} keywords...")
+                    # Identifier les keywords sans volume (nouveaux ou jamais traités)
+                    if 'volume' not in st.session_state.df_master.columns:
+                        st.session_state.df_master['volume'] = None
+                        st.session_state.df_master['cpc'] = None
                     
-                    vol_data = fetch_volumes(
-                        keywords,
-                        st.session_state.dataforseo_login,
-                        st.session_state.dataforseo_password,
-                        st.session_state.location_code,
-                        st.session_state.language_code
-                    )
-                    st.session_state.df_master['volume'] = st.session_state.df_master['keyword'].map(
-                        lambda kw: vol_data.get(kw, {}).get('volume', 0)
-                    )
-                    st.session_state.df_master['cpc'] = st.session_state.df_master['keyword'].map(
-                        lambda kw: vol_data.get(kw, {}).get('cpc', 0.0)
-                    )
-                    status.empty()
+                    # Keywords à traiter = ceux sans volume (None ou jamais défini)
+                    mask_missing = st.session_state.df_master['volume'].isna()
+                    keywords_to_fetch = st.session_state.df_master[mask_missing]['keyword'].tolist()
                     
-                    total_vol = st.session_state.df_master['volume'].sum()
-                    with_vol = (st.session_state.df_master['volume'] > 0).sum()
-                    st.success(f"✅ Volumes récupérés — {with_vol}/{len(keywords)} avec volume | Total: {total_vol:,.0f}")
-                    
-                    # Aperçu top volumes
-                    st.markdown("**📋 Top 10 par volume :**")
-                    top_vol = st.session_state.df_master.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
-                    st.dataframe(top_vol, use_container_width=True, hide_index=True)
+                    if len(keywords_to_fetch) == 0:
+                        st.info("✅ Tous les keywords ont déjà un volume. Rien à récupérer.")
+                    else:
+                        status = st.empty()
+                        status.text(f"📊 Récupération volumes pour {len(keywords_to_fetch)} keywords...")
+                        
+                        vol_data = fetch_volumes(
+                            keywords_to_fetch,
+                            st.session_state.dataforseo_login,
+                            st.session_state.dataforseo_password,
+                            st.session_state.location_code,
+                            st.session_state.language_code
+                        )
+                        
+                        # Mettre à jour uniquement les keywords sans volume
+                        for idx, row in st.session_state.df_master[mask_missing].iterrows():
+                            kw = row['keyword']
+                            st.session_state.df_master.at[idx, 'volume'] = vol_data.get(kw, {}).get('volume', 0)
+                            st.session_state.df_master.at[idx, 'cpc'] = vol_data.get(kw, {}).get('cpc', 0.0)
+                        
+                        status.empty()
+                        
+                        total_vol = st.session_state.df_master['volume'].sum()
+                        with_vol = (st.session_state.df_master['volume'] > 0).sum()
+                        st.success(f"✅ {len(keywords_to_fetch)} volumes récupérés — {with_vol}/{len(st.session_state.df_master)} avec volume | Total: {total_vol:,.0f}")
+                        
+                        # Aperçu top volumes
+                        st.markdown("**📋 Top 10 par volume :**")
+                        top_vol = st.session_state.df_master.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
+                        st.dataframe(top_vol, use_container_width=True, hide_index=True)
         
         # ----- ÉTAPE 6 : FILTRAGE -----
         with st.expander("**6️⃣ Filtrage**"):
