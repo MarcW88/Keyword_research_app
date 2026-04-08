@@ -25,160 +25,168 @@ CLAUDE_API_KEY = st.secrets.get("CLAUDE_API_KEY_1", "") + st.secrets.get("CLAUDE
 JINA_API_KEY = st.secrets.get("JINA_API_KEY", "")
 
 # =============================================================================
-# CUSTOM CSS — SEMACTIC STYLE
+# CUSTOM CSS — CHARTE GRAPHIQUE PASTEL
 # =============================================================================
 st.markdown("""
 <style>
-/* Fond crème */
+/* Fond principal - vert pastel très clair */
 .stApp {
-    background-color: #FFFBF5;
+    background-color: #F8F9FB;
 }
 
-/* Sidebar */
+/* Sidebar - pêche pastel */
 [data-testid="stSidebar"] {
-    background-color: #FFF8EE;
-    border-right: 1px solid #F0E6D8;
+    background-color: #FDF2EB;
+    border-right: 1px solid #E8E8E8;
 }
 
-/* Headers */
+/* Headers - gris foncé */
 h1, h2, h3 {
-    color: #1A1A1A !important;
-    font-weight: 700 !important;
+    color: #3A3A3A !important;
+    font-weight: 600 !important;
 }
 
 /* Cards style pour les expanders */
 [data-testid="stExpander"] {
-    background-color: white;
-    border: 1px solid #F0E6D8;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-    margin-bottom: 12px;
+    background-color: #FFFFFF;
+    border: 1px solid #E8E8E8;
+    border-radius: 8px;
+    box-shadow: none;
+    margin-bottom: 8px;
 }
 
 [data-testid="stExpander"] > div:first-child {
-    border-radius: 12px;
-}
-
-/* Info boxes en jaune Semactic */
-.stAlert > div {
-    background-color: #FFF9E6 !important;
-    border: 1px solid #FFE066 !important;
     border-radius: 8px;
 }
 
-/* Success boxes */
-.stSuccess > div {
-    background-color: #E8F5E9 !important;
-    border: 1px solid #81C784 !important;
+/* Info boxes - jaune pastel */
+.stAlert > div {
+    background-color: #FFFFDD !important;
+    border: 1px solid #FCFBAA !important;
+    border-radius: 6px;
 }
 
-/* Boutons style Semactic */
+/* Success boxes - vert pastel */
+.stSuccess > div {
+    background-color: #EEFADE !important;
+    border: 1px solid #B7D8B2 !important;
+}
+
+/* Boutons style pastel */
 .stButton > button {
-    background-color: #FFD93D !important;
-    color: #1A1A1A !important;
+    background-color: #B7D8B2 !important;
+    color: #3A3A3A !important;
     border: none !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
+    border-radius: 6px !important;
+    font-weight: 500 !important;
     padding: 0.5rem 1rem !important;
     transition: all 0.2s ease !important;
 }
 
 .stButton > button:hover {
-    background-color: #FFC107 !important;
-    box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3) !important;
+    background-color: #A3C7E7 !important;
+    box-shadow: 0 2px 8px rgba(163, 199, 231, 0.3) !important;
 }
 
-/* Metrics */
+/* Metrics - fond blanc, bordure subtile */
 [data-testid="stMetric"] {
-    background-color: white;
-    padding: 16px;
-    border-radius: 10px;
-    border: 1px solid #F0E6D8;
+    background-color: #FFFFFF;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #E8E8E8;
 }
 
 [data-testid="stMetricValue"] {
-    color: #1A1A1A !important;
-    font-weight: 700 !important;
+    color: #3A3A3A !important;
+    font-weight: 600 !important;
 }
 
 /* DataFrames */
 [data-testid="stDataFrame"] {
-    border-radius: 10px;
+    border-radius: 6px;
     overflow: hidden;
 }
 
-/* Tabs */
+/* Tabs - style pastel */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
+    gap: 4px;
+    background-color: transparent;
 }
 
 .stTabs [data-baseweb="tab"] {
-    background-color: white;
-    border-radius: 8px;
-    border: 1px solid #F0E6D8;
+    background-color: #FFFFFF;
+    border-radius: 6px;
+    border: 1px solid #E8E8E8;
     padding: 8px 16px;
+    color: #3A3A3A;
 }
 
 .stTabs [aria-selected="true"] {
-    background-color: #FFD93D !important;
-    border-color: #FFD93D !important;
+    background-color: #DAE8F8 !important;
+    border-color: #A3C7E7 !important;
 }
 
-/* Progress bar */
+/* Progress bar - bleu pastel */
 .stProgress > div > div {
-    background-color: #FFD93D !important;
+    background-color: #A3C7E7 !important;
 }
 
-/* Badges de priorité */
+/* Badges de priorité - tons pastel */
 .priority-high {
-    background-color: #FF6B6B;
-    color: white;
+    background-color: #F8C6C6;
+    color: #3A3A3A;
     padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
 }
 
 .priority-medium {
-    background-color: #FFD93D;
-    color: #1A1A1A;
+    background-color: #FCFBAA;
+    color: #3A3A3A;
     padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
 }
 
 .priority-low {
-    background-color: #81C784;
-    color: white;
+    background-color: #B7D8B2;
+    color: #3A3A3A;
     padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
 }
 
 /* Dividers */
 hr {
-    border-color: #F0E6D8 !important;
+    border-color: #E8E8E8 !important;
 }
 
-/* Input fields */
+/* Input fields - style épuré */
 .stTextInput > div > div > input,
 .stNumberInput > div > div > input,
 .stTextArea > div > div > textarea {
-    border-radius: 8px !important;
-    border-color: #E0D6C8 !important;
+    border-radius: 6px !important;
+    border-color: #E8E8E8 !important;
+    background-color: #FFFFFF !important;
 }
 
 .stTextInput > div > div > input:focus,
 .stNumberInput > div > div > input:focus {
-    border-color: #FFD93D !important;
-    box-shadow: 0 0 0 2px rgba(255, 217, 61, 0.2) !important;
+    border-color: #A3C7E7 !important;
+    box-shadow: 0 0 0 2px rgba(163, 199, 231, 0.2) !important;
 }
 
 /* Selectbox */
 .stSelectbox > div > div {
-    border-radius: 8px !important;
+    border-radius: 6px !important;
+}
+
+/* Multiselect */
+.stMultiSelect > div > div {
+    border-radius: 6px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -187,15 +195,15 @@ hr {
 # HELPER FUNCTIONS
 # =============================================================================
 def priority_badge(priority):
-    """Retourne un badge HTML coloré selon la priorité"""
+    """Retourne un badge HTML coloré selon la priorité - tons pastel"""
     colors = {
-        'HIGH': ('#FF6B6B', 'white'),
-        'HIGH - Opp': ('#FF6B6B', 'white'),
-        'MEDIUM': ('#FFD93D', '#1A1A1A'),
-        'LOW': ('#81C784', 'white'),
+        'HIGH': ('#F8C6C6', '#3A3A3A'),
+        'HIGH - Opp': ('#F8C6C6', '#3A3A3A'),
+        'MEDIUM': ('#FCFBAA', '#3A3A3A'),
+        'LOW': ('#B7D8B2', '#3A3A3A'),
     }
-    bg, text = colors.get(priority, ('#E0E0E0', '#666'))
-    return f'<span style="background-color:{bg}; color:{text}; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;">{priority}</span>'
+    bg, text = colors.get(priority, ('#E8E8E8', '#3A3A3A'))
+    return f'<span style="background-color:{bg}; color:{text}; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:500;">{priority}</span>'
 
 def show_stats_cards(df):
     """Affiche les stats dans des cards stylées"""
@@ -522,18 +530,18 @@ with st.sidebar:
 # =============================================================================
 # MAIN
 # =============================================================================
-# Header stylé
+# Header stylé - tons pastel
 st.markdown("""
 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-    <div style="background: linear-gradient(135deg, #FFD93D 0%, #FFC107 100%); 
-                width: 48px; height: 48px; border-radius: 12px; 
+    <div style="background: linear-gradient(135deg, #B7D8B2 0%, #A3C7E7 100%); 
+                width: 44px; height: 44px; border-radius: 10px; 
                 display: flex; align-items: center; justify-content: center;
-                font-size: 24px; box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);">
+                font-size: 22px;">
         🔍
     </div>
     <div>
-        <h1 style="margin: 0; font-size: 28px;">Keyword Research</h1>
-        <p style="margin: 0; color: #666; font-size: 14px;">Analyse sémantique guidée</p>
+        <h1 style="margin: 0; font-size: 24px; color: #3A3A3A;">Keyword Research</h1>
+        <p style="margin: 0; color: #8A8A8A; font-size: 13px;">Analyse sémantique guidée</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -689,7 +697,13 @@ with tab1:
                         progress.empty()
                         
                         if valid_seeds:
-                            new_df = pd.DataFrame({'keyword': valid_seeds, 'source': 'claude_seeds'})
+                            # Stocker les volumes déjà récupérés pour éviter un double appel
+                            new_df = pd.DataFrame({
+                                'keyword': valid_seeds, 
+                                'source': 'claude_seeds',
+                                'volume': [vol_data.get(kw, {}).get('volume', 0) for kw in valid_seeds],
+                                'cpc': [vol_data.get(kw, {}).get('cpc', 0.0) for kw in valid_seeds]
+                            })
                             before = len(st.session_state.df_master)
                             st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
                             added = len(st.session_state.df_master) - before
@@ -789,7 +803,8 @@ with tab1:
             
             missing_vol = 0
             if len(st.session_state.df_master) > 0 and 'volume' in st.session_state.df_master.columns:
-                missing_vol = st.session_state.df_master['volume'].isna().sum() + (st.session_state.df_master['volume'] == 0).sum()
+                # Seulement les None, pas les 0 (0 = déjà vérifié, pas de volume)
+                missing_vol = st.session_state.df_master['volume'].isna().sum()
             else:
                 missing_vol = len(st.session_state.df_master)
             
@@ -1078,8 +1093,8 @@ with tab1:
         st.divider()
         st.markdown("""
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-            <div style="width: 4px; height: 24px; background: linear-gradient(135deg, #FFD93D 0%, #FFC107 100%); border-radius: 2px;"></div>
-            <h3 style="margin: 0;">État actuel</h3>
+            <div style="width: 3px; height: 20px; background: linear-gradient(135deg, #B7D8B2 0%, #A3C7E7 100%); border-radius: 2px;"></div>
+            <h3 style="margin: 0; color: #3A3A3A;">État actuel</h3>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1219,7 +1234,13 @@ with tab2:
                     progress.empty()
                     
                     if valid:
-                        new_df = pd.DataFrame({'keyword': valid, 'source': 'theme'})
+                        # Stocker les volumes déjà récupérés pour éviter un double appel
+                        new_df = pd.DataFrame({
+                            'keyword': valid, 
+                            'source': 'theme',
+                            'volume': [vol_data.get(kw, {}).get('volume', 0) for kw in valid],
+                            'cpc': [vol_data.get(kw, {}).get('cpc', 0.0) for kw in valid]
+                        })
                         before = len(st.session_state.df_master)
                         st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
                         added = len(st.session_state.df_master) - before
@@ -1236,11 +1257,12 @@ with tab2:
     
     # ----- D1 : VOLUMES NOUVEAUX -----
     with st.expander("**D1 — Volumes (nouveaux uniquement)**"):
-        st.info("📖 Récupère les volumes uniquement pour les keywords qui n'en ont pas encore.")
+        st.info("📖 Récupère les volumes uniquement pour les keywords qui n'en ont pas encore (colonne volume = None).")
         
         missing_vol = 0
         if len(st.session_state.df_master) > 0 and 'volume' in st.session_state.df_master.columns:
-            missing_vol = st.session_state.df_master['volume'].isna().sum() + (st.session_state.df_master['volume'] == 0).sum()
+            # Seulement les None, pas les 0 (0 = déjà vérifié, pas de volume)
+            missing_vol = st.session_state.df_master['volume'].isna().sum()
         else:
             missing_vol = len(st.session_state.df_master)
         
@@ -1248,12 +1270,12 @@ with tab2:
         
         if st.button("📊 Récupérer Volumes manquants", key="btn_vol_tab2", use_container_width=True):
             if missing_vol == 0:
-                st.success("✅ Tous les keywords ont déjà un volume")
+                st.success("✅ Tous les keywords ont déjà un volume (ou ont été vérifiés)")
             else:
-                # Filtrer ceux sans volume
+                # Filtrer ceux sans volume (None seulement, pas 0)
                 if 'volume' in st.session_state.df_master.columns:
                     kws_missing = st.session_state.df_master[
-                        st.session_state.df_master['volume'].isna() | (st.session_state.df_master['volume'] == 0)
+                        st.session_state.df_master['volume'].isna()
                     ]['keyword'].tolist()
                 else:
                     kws_missing = st.session_state.df_master['keyword'].tolist()
