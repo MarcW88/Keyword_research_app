@@ -325,21 +325,56 @@ def fetch_page_with_jina(url, jina_key=None):
     except:
         return None
 
-def generate_claude_seeds(site_content, existing_keywords, num_seeds, language_code, claude_api_key):
-    """Génère des seeds via Claude en analysant le contenu du site"""
+def generate_claude_seeds(site_content, existing_keywords, num_seeds, language_code, claude_api_key, business_context=None, kickoff_content=None):
+    """Génère des seeds via Claude en analysant le kickoff et le contexte business"""
     try:
         client = anthropic.Anthropic(api_key=claude_api_key)
-        prompt = f"""Expert SEO. Analyse ce site et génère des idées de keywords.
+        
+        # Construire le contexte à partir du kickoff et business_context
+        context_parts = []
+        
+        if kickoff_content:
+            context_parts.append(f"""DOCUMENT KICKOFF (PRIORITAIRE):
+{kickoff_content[:3000]}
+""")
+        
+        if business_context:
+            context_parts.append(f"""CONTEXTE BUSINESS EXTRAIT:
+- Type: {business_context.get('business_type', 'N/A')}
+- Produits/Services: {', '.join(business_context.get('main_products_services', [])[:10])}
+- Cible: {business_context.get('target_audience', 'N/A')}
+- Objectifs: {', '.join(business_context.get('business_objectives', [])[:5])}
+- Themes pertinents identifies: {', '.join(business_context.get('relevant_themes', [])[:15])}
+""")
+        
+        if site_content:
+            context_parts.append(f"""CONTENU DU SITE (pour reference):
+{site_content[:2000]}
+""")
+        
+        context = "\n".join(context_parts) if context_parts else "Pas de contexte disponible"
+        
+        lang_name = "francais" if language_code == "fr" else "neerlandais"
+        
+        prompt = f"""Tu es un expert SEO. Tu dois generer des mots-cles strategiques pour une campagne SEO.
 
-Contenu du site:
-{site_content[:5000]}
+{context}
 
-Keywords existants (à ne pas répéter): {json.dumps(existing_keywords[:30], ensure_ascii=False)}
+INSTRUCTIONS:
+1. Base-toi PRINCIPALEMENT sur le document kickoff et les objectifs business
+2. Les mots-cles doivent etre en {lang_name} ({language_code})
+3. Genere des mots-cles qui correspondent aux themes pertinents identifies
+4. Mix de mots-cles:
+   - Transactionnels (acheter, prix, comparatif, meilleur)
+   - Informationnels (comment, guide, qu'est-ce que)
+   - Navigationnels (lies aux produits/services)
+5. Longueur: 2-5 mots par keyword
+6. Ne repete PAS ces keywords existants: {json.dumps(existing_keywords[:20], ensure_ascii=False)}
 
-Génère {num_seeds} NOUVEAUX keywords courts (2-4 mots) en {language_code}.
-Mix transactionnel + informationnel. Pertinents pour ce business.
+Genere exactement {num_seeds} mots-cles pertinents pour ce business.
 
-Réponds UNIQUEMENT en JSON: {{"keywords": ["kw1", "kw2", ...]}}"""
+Reponds UNIQUEMENT avec ce JSON (pas de texte avant/apres):
+{{"keywords": ["mot-cle 1", "mot-cle 2", ...]}}"""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -1067,12 +1102,18 @@ with st.expander("**Etape 4 - Thematiques principales**"):
             progress.progress(30, text="Analyse par Claude...")
             existing = st.session_state.df_master['keyword'].tolist() if len(st.session_state.df_master) > 0 else []
             
+            # Récupérer le contexte business et kickoff
+            biz_ctx = st.session_state.get('business_context', None)
+            kickoff = st.session_state.get('kickoff_content', None)
+            
             seeds = generate_claude_seeds(
                 site_content,
                 existing,
                 claude_seeds_count,
                 st.session_state.language_code,
-                st.session_state.claude_api_key
+                st.session_state.claude_api_key,
+                business_context=biz_ctx,
+                kickoff_content=kickoff
             )
             progress.progress(70, text="Validation des volumes...")
             
@@ -1267,10 +1308,10 @@ with st.expander("**Etape 6 - Recuperer les volumes**"):
 # ----- ÉTAPE 7 : FILTRAGE -----
 with st.expander("**Etape 7 - Filtrage**"):
     st.markdown("""
-    Cette etape nettoie la liste en supprimant les mots-cles non pertinents: 
-    volume trop faible, mauvaise langue, marques concurrentes ou hors-sujet. 
-    Le filtrage par langue utilise une detection automatique pour identifier 
-    les mots-cles dans la mauvaise langue.
+    Cette etape nettoie la liste en supprimant les mots-cles avec un volume 
+    trop faible et ceux dans la mauvaise langue. Le filtrage par langue utilise 
+    une detection automatique (langdetect). La pertinence thematique est a 
+    evaluer manuellement apres export.
     """)
     
     # --- FILTRAGE PAR VOLUME (principal) ---
@@ -1296,77 +1337,6 @@ with st.expander("**Etape 7 - Filtrage**"):
             if removed > 0:
                 st.markdown("**Exemples supprimes:**")
                 st.code('\n'.join(removed_kws[:10]))
-    
-    st.divider()
-    
-    # --- ANALYSE DU CONTEXTE BUSINESS ---
-    st.markdown("### Analyse du contexte business")
-    st.caption("Scrape le site avec Jina et extrait le contexte business pour un filtrage intelligent")
-    
-    # Afficher si kickoff est chargé
-    if 'kickoff_content' in st.session_state and st.session_state.kickoff_content:
-        st.success(f"Document kickoff charge ({len(st.session_state.kickoff_content)} caracteres)")
-    else:
-        st.caption("Vous pouvez ajouter un document kickoff dans la sidebar pour ameliorer le filtrage")
-    
-    if st.button("Analyser le site client", key="btn_analyze_site", use_container_width=True):
-        progress = st.progress(0, text="Scraping du site avec Jina...")
-        
-        # Scraper le site
-        site_content = analyze_site_context(st.session_state.site)
-        st.session_state.site_content_raw = site_content
-        
-        if not site_content and not st.session_state.get('kickoff_content'):
-            progress.empty()
-            st.error("Impossible de scraper le site et pas de kickoff")
-        else:
-            progress.progress(50, text="Extraction du contexte business...")
-            
-            # Extraire le contexte business (avec kickoff si disponible)
-            kickoff = st.session_state.get('kickoff_content', None)
-            business_context = extract_business_context(
-                site_content,
-                st.session_state.site,
-                st.session_state.claude_api_key,
-                kickoff
-            )
-            st.session_state.business_context = business_context
-            
-            progress.progress(100, text="Terminé!")
-            progress.empty()
-            
-            if business_context:
-                st.success("Contexte business extrait" + (" (avec kickoff)" if kickoff else ""))
-            else:
-                st.warning("Contexte non extrait, le filtrage utilisera le contenu brut")
-    
-    # Afficher le contexte si disponible
-    if 'business_context' in st.session_state and st.session_state.business_context:
-        ctx = st.session_state.business_context
-        with st.expander("Contexte business extrait", expanded=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
-                st.markdown(f"**Cible:** {ctx.get('target_audience', 'N/A')}")
-                st.markdown("**Produits/Services:**")
-                for item in ctx.get('main_products_services', [])[:5]:
-                    st.caption(f"- {item}")
-                if ctx.get('business_objectives'):
-                    st.markdown("**Objectifs business:**")
-                    for obj in ctx.get('business_objectives', [])[:5]:
-                        st.caption(f"- {obj}")
-            with col2:
-                st.markdown("**Themes pertinents:**")
-                for theme in ctx.get('relevant_themes', [])[:8]:
-                    st.caption(f"+ {theme}")
-                st.markdown("**Themes hors-sujet:**")
-                for theme in ctx.get('irrelevant_themes', [])[:5]:
-                    st.caption(f"- {theme}")
-    
-    # Afficher le contenu brut scrapé
-    if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
-        with st.expander("Contenu brut scrape par Jina"):
-            st.text(st.session_state.site_content_raw[:3000] + "...")
     
     st.divider()
     
@@ -1414,81 +1384,7 @@ with st.expander("**Etape 7 - Filtrage**"):
     else:
         st.warning("langdetect non installe. Installez avec: pip install langdetect")
     
-    st.divider()
-    
-    # --- FILTRAGE CLAUDE ---
-    st.markdown("### Filtrage intelligent (marques, hors-sujet)")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Preview filtrage", key="btn_preview_claude", use_container_width=True):
-            if len(st.session_state.df_master) == 0:
-                st.warning("Pas de keywords")
-            elif 'business_context' not in st.session_state:
-                st.warning("⚠️ Analyse d'abord le site client!")
-            else:
-                keywords = st.session_state.df_master['keyword'].tolist()
-                progress = st.progress(0, text="Filtrage par Claude...")
-                
-                # Utiliser le contexte business structuré
-                ctx = st.session_state.business_context
-                site_content = st.session_state.get('site_content_raw', '')
-                
-                result = filter_with_claude_v2(
-                    keywords,
-                    st.session_state.site,
-                    st.session_state.language_code,
-                    st.session_state.claude_api_key,
-                    st.session_state.competitors,
-                    ctx,
-                    site_content
-                )
-                progress.progress(100, text="Terminé!")
-                progress.empty()
-                
-                st.session_state.claude_filter_preview = result
-                
-                filtered_out = result.get('filtered_out', {})
-                relevant = result.get('relevant', [])
-                total_filtered = len(keywords) - len(relevant)
-                
-                st.info(f"📋 **Preview**: {total_filtered} keywords seraient supprimés sur {len(keywords)} | **{len(relevant)} gardés**")
-                
-                # Afficher ce qui est GARDÉ
-                with st.expander(f"✅ Keywords GARDÉS ({len(relevant)})", expanded=True):
-                    st.code('\n'.join(relevant[:100]))
-                    if len(relevant) > 100:
-                        st.caption(f"... et {len(relevant) - 100} autres")
-                
-                # Afficher ce qui est filtré par catégorie
-                cat_labels = {
-                    'competitor_brands': '🏷️ Marques concurrentes',
-                    'wrong_language': '🌍 Mauvaise langue',
-                    'locations': '📍 Villes/Locations',
-                    'off_topic': '❌ Hors-sujet'
-                }
-                for cat, items in filtered_out.items():
-                    if items and len(items) > 0:
-                        label = cat_labels.get(cat, cat)
-                        with st.expander(f"{label} ({len(items)})"):
-                            st.code('\n'.join(items[:50]))
-    
-    with col2:
-        if st.button("✅ Appliquer le filtrage", key="btn_apply_claude", use_container_width=True):
-            if 'claude_filter_preview' not in st.session_state:
-                st.warning("Lance d'abord le Preview!")
-            else:
-                result = st.session_state.claude_filter_preview
-                relevant = result.get('relevant', st.session_state.df_master['keyword'].tolist())
-                
-                before = len(st.session_state.df_master)
-                st.session_state.df_master = st.session_state.df_master[
-                    st.session_state.df_master['keyword'].isin(relevant)
-                ].reset_index(drop=True)
-                removed = before - len(st.session_state.df_master)
-                
-                st.success(f"✅ {removed} filtrés — Reste: {len(st.session_state.df_master)}")
-                del st.session_state.claude_filter_preview
+
 
 # ----- ÉTAPE 8 : CATÉGORISATION -----
 with st.expander("**Etape 8 - Categorisation**"):
