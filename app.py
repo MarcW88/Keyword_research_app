@@ -758,11 +758,11 @@ def analyze_serp(keyword, login, password, location_code, language_code, client_
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    site = st.text_input("Site client", value="dedecker.be")
+    site = st.text_input("Site client", value="")
     language = st.selectbox("Marché", ["be_nl", "be_fr", "fr", "nl"], index=0)
     competitors_input = st.text_area(
         "Concurrents (1 par ligne)",
-        value="vika.be\ndsmkeukens.be\ndovykeukens.be\ndiapal.be\nilwa.be"
+        value=""
     )
     
     st.divider()
