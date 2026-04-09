@@ -356,26 +356,28 @@ def generate_claude_seeds(site_content, existing_keywords, num_seeds, language_c
         
         lang_name = "francais" if language_code == "fr" else "neerlandais"
         
-        prompt = f"""Tu es un expert SEO. Tu dois generer des THEMATIQUES de mots-cles strategiques pour une campagne SEO.
+        prompt = f"""Tu es un expert SEO. Tu dois generer des CATEGORIES de mots-cles pour structurer une campagne SEO.
 
 {context}
 
 INSTRUCTIONS:
 1. Base-toi PRINCIPALEMENT sur le document kickoff et les objectifs business
-2. Les thematiques doivent etre en {lang_name} ({language_code})
-3. Genere UNIQUEMENT des thematiques PERTINENTES pour ce business specifique
-4. IMPORTANT: Ne genere PAS de thematiques juste pour atteindre un nombre. Si seulement 15 thematiques sont vraiment pertinentes, n'en genere que 15.
-5. Chaque thematique doit etre un mot-cle "seed" qui pourra etre expanse (2-4 mots)
-6. Mix de thematiques:
-   - Transactionnelles (acheter, prix, comparatif, meilleur)
-   - Informationnelles (comment, guide, qu'est-ce que)
-   - Navigationnelles (lies aux produits/services)
-7. Ne repete PAS ces keywords existants: {json.dumps(existing_keywords[:20], ensure_ascii=False)}
+2. Les categories doivent etre en {lang_name} ({language_code})
+3. Chaque categorie doit etre un THEME GENERIQUE (1-3 mots) qui servira a regrouper des mots-cles
+4. Les categories doivent couvrir les differents aspects du business:
+   - Produits/services principaux
+   - Questions frequentes des clients
+   - Termes techniques du secteur
+   - Intentions d'achat
+5. IMPORTANT: Genere des categories LARGES qui pourront contenir plusieurs mots-cles
+6. Ne genere PAS de categories trop specifiques ou de longue traine
+7. Exemples de bonnes categories: "ETF investissement", "gestion patrimoine", "frais courtage", "epargne pension"
+8. Exemples de mauvaises categories (trop specifiques): "meilleur ETF monde 2024", "comment investir 5000 euros"
 
-Genere JUSQU'A {num_seeds} thematiques pertinentes (moins si le business ne justifie pas autant).
+Genere JUSQU'A {num_seeds} categories pertinentes (moins si le business ne justifie pas autant).
 
 Reponds UNIQUEMENT avec ce JSON (pas de texte avant/apres):
-{{"keywords": ["thematique 1", "thematique 2", ...]}}"""
+{{"keywords": ["categorie 1", "categorie 2", ...]}}"""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -1072,12 +1074,12 @@ with st.expander("**Etape 3 - Extraction concurrents**"):
         else:
             st.warning("Aucun mot-cle trouve")
 
-# ----- ÉTAPE 4 : THÉMATIQUES PRINCIPALES -----
-with st.expander("**Etape 4 - Thematiques principales**"):
+# ----- ÉTAPE 4 : CATÉGORIES -----
+with st.expander("**Etape 4 - Categories**"):
     st.markdown("""
-    Cette etape genere les thematiques principales a cibler, basees sur le contexte 
-    business extrait a l'etape 1. Claude analyse le kickoff et propose des thematiques 
-    strategiques. Vous pouvez ensuite selectionner celles a garder avant l'expansion.
+    Cette etape genere les categories de mots-cles basees sur le kickoff. 
+    Chaque categorie servira de base pour l'expansion et permettra de regrouper 
+    les mots-cles par theme. Selectionnez les categories pertinentes avant de continuer.
     """)
     
     if 'business_context' not in st.session_state:
@@ -1089,12 +1091,12 @@ with st.expander("**Etape 4 - Thematiques principales**"):
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        claude_seeds_count = st.number_input("Nombre max de thematiques", value=30, min_value=5, max_value=100, key="claude_seeds",
+        claude_seeds_count = st.number_input("Nombre max de categories", value=30, min_value=5, max_value=100, key="claude_seeds",
                                               help="Claude generera jusqu'a ce nombre de thematiques, mais seulement celles qui sont pertinentes.")
     with col2:
-        st.metric("Thematiques actuelles", len(st.session_state.generated_themes))
+        st.metric("Categories actuelles", len(st.session_state.generated_themes))
     
-    if st.button("Generer les thematiques", key="btn_claude_seeds", use_container_width=True):
+    if st.button("Generer les categories", key="btn_claude_seeds", use_container_width=True):
         progress = st.progress(0, text="Recuperation contenu du site...")
         site_url = f"https://www.{st.session_state.site}"
         site_content = fetch_page_with_jina(site_url)
@@ -1142,7 +1144,7 @@ with st.expander("**Etape 4 - Thematiques principales**"):
             progress.empty()
             
             with_vol = sum(1 for t in themes_with_vol if t['volume'] > 0)
-            st.success(f"{len(seeds)} thematiques generees | {with_vol} avec volume de recherche")
+            st.success(f"{len(seeds)} categories generees | {with_vol} avec volume de recherche")
         else:
             progress.empty()
             st.warning("Claude n'a pas genere de thematiques")
@@ -1151,7 +1153,7 @@ with st.expander("**Etape 4 - Thematiques principales**"):
     if st.session_state.generated_themes:
         st.divider()
         st.markdown("### Selectionner les thematiques a garder")
-        st.caption("Decochez les thematiques non pertinentes avant de valider")
+        st.caption("Decochez les categories non pertinentes avant de valider")
         
         # Créer un DataFrame pour l'affichage
         themes_df = pd.DataFrame(st.session_state.generated_themes)
@@ -1160,7 +1162,7 @@ with st.expander("**Etape 4 - Thematiques principales**"):
         # Multiselect pour choisir les thématiques à garder
         all_themes = themes_df['keyword'].tolist()
         selected_themes = st.multiselect(
-            "Thematiques selectionnees",
+            "Categories selectionnees",
             options=all_themes,
             default=all_themes,
             key="selected_themes"
@@ -1191,113 +1193,98 @@ with st.expander("**Etape 4 - Thematiques principales**"):
                 st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
                 added = len(st.session_state.df_master) - before
                 
-                st.success(f"{added} thematiques ajoutees au master | Total: {len(st.session_state.df_master)}")
+                st.success(f"{added} categories ajoutees au master | Total: {len(st.session_state.df_master)}")
                 
                 # Vider la liste temporaire
                 st.session_state.generated_themes = []
 
-# ----- ÉTAPE 5 : EXPANSION RELATED -----
-with st.expander("**Etape 5 - Expansion (mots-cles lies)**"):
+# ----- ÉTAPE 5 : EXPANSION PAR CATÉGORIE -----
+with st.expander("**Etape 5 - Expansion par categorie**"):
     st.markdown("""
-    Cette etape elargit la liste en cherchant les mots-cles lies a ceux deja collectes. 
-    Le systeme selectionne les mots-cles de base (thematiques de l'etape 4 ou mots-cles extraits) 
-    et interroge l'API Google Ads pour trouver des variantes et synonymes recherches par les utilisateurs.
-    Les volumes seront recuperes a l'etape 6.
+    Cette etape cherche les mots-cles lies pour chaque categorie validee a l'etape 4. 
+    Chaque mot-cle trouve sera automatiquement tague avec sa categorie d'origine, 
+    ce qui facilitera l'analyse et l'export.
     """)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        expansion_top_volume = st.number_input("Top mots-cles par volume", value=50, min_value=10, max_value=200, key="exp_top",
-                                                help="Nombre de mots-cles a fort volume a utiliser comme base pour l'expansion.")
-    with col2:
-        expansion_per_cluster = st.number_input("Mots-cles par cluster", value=10, min_value=5, max_value=50, key="exp_cluster",
-                                                 help="Nombre de mots-cles a prendre dans chaque groupe thematique pour assurer la diversite.")
-    with col3:
-        related_per_keyword = st.number_input("Lies par mot-cle", value=30, min_value=10, max_value=100, key="related_per",
-                                               help="Nombre de mots-cles lies a recuperer pour chaque mot-cle de base.")
-    
-    total_seeds = expansion_top_volume + (15 * expansion_per_cluster)
-    st.caption(f"Bases estimees: ~{total_seeds} | Lies estimes: ~{total_seeds * related_per_keyword} | Cout: ~{total_seeds * 0.005:.2f} EUR")
-    
-    if st.button("Lancer l'expansion", key="btn_expansion", use_container_width=True):
-        if len(st.session_state.df_master) == 0:
-            st.warning("Lancez d'abord l'extraction (etapes 2-4)")
-        else:
-            # Utiliser les volumes si disponibles, sinon prendre tous les mots-clés
-            if 'volume' in st.session_state.df_master.columns:
-                # Convertir en numérique et remplacer NaN par 0
-                st.session_state.df_master['volume'] = pd.to_numeric(st.session_state.df_master['volume'], errors='coerce').fillna(0)
-                df_with_vol = st.session_state.df_master[st.session_state.df_master['volume'] > 0].copy()
-                if len(df_with_vol) == 0:
-                    # Pas de volumes, utiliser tous les mots-clés
-                    df_for_expansion = st.session_state.df_master.copy()
-                    has_volumes = False
-                else:
-                    df_for_expansion = df_with_vol
-                    has_volumes = True
-            else:
-                df_for_expansion = st.session_state.df_master.copy()
-                has_volumes = False
+    # Vérifier si des catégories sont validées
+    if 'validated_categories' not in st.session_state or not st.session_state.validated_categories:
+        st.warning("Validez d'abord les categories a l'etape 4")
+    else:
+        categories = st.session_state.validated_categories
+        st.info(f"**{len(categories)} categories** a expander: {', '.join(categories[:5])}{'...' if len(categories) > 5 else ''}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            related_per_category = st.number_input("Mots-cles par categorie", value=50, min_value=10, max_value=200, key="related_per_cat",
+                                                    help="Nombre de mots-cles lies a recuperer pour chaque categorie.")
+        with col2:
+            estimated_total = len(categories) * related_per_category
+            st.metric("Mots-cles estimes", f"~{estimated_total}")
+        
+        st.caption(f"Cout estime: ~{len(categories) * 0.005:.2f} EUR")
+        
+        if st.button("Lancer l'expansion par categorie", key="btn_expansion", use_container_width=True):
+            all_keywords = []
+            progress = st.progress(0)
+            status = st.empty()
             
-            if len(df_for_expansion) == 0:
-                st.warning("Pas de mots-cles disponibles")
+            for i, category in enumerate(categories):
+                status.text(f"{i+1}/{len(categories)} - {category}...")
+                
+                # Récupérer les mots-clés liés pour cette catégorie
+                related = get_related_keywords(
+                    category,
+                    st.session_state.dataforseo_login,
+                    st.session_state.dataforseo_password,
+                    st.session_state.location_code,
+                    st.session_state.language_code,
+                    related_per_category
+                )
+                
+                # Ajouter avec la catégorie comme tag
+                for r in related:
+                    if r['volume'] >= 10:  # Filtrer les volumes trop faibles
+                        all_keywords.append({
+                            'keyword': r['keyword'],
+                            'category': category,
+                            'volume': r['volume'],
+                            'source': 'expansion'
+                        })
+                
+                progress.progress((i + 1) / len(categories))
+                time.sleep(0.3)
+            
+            progress.empty()
+            status.empty()
+            
+            if all_keywords:
+                new_df = pd.DataFrame(all_keywords)
+                
+                # Dédupliquer en gardant le premier (donc la première catégorie trouvée)
+                new_df = new_df.drop_duplicates(subset='keyword', keep='first')
+                
+                before = len(st.session_state.df_master)
+                
+                # Ajouter au master
+                if 'category' not in st.session_state.df_master.columns:
+                    st.session_state.df_master['category'] = ''
+                
+                st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword', keep='last')
+                added = len(st.session_state.df_master) - before
+                
+                st.success(f"{len(new_df)} mots-cles trouves | {added} nouveaux ajoutes")
+                
+                # Afficher le résumé par catégorie
+                st.markdown("**Mots-cles par categorie:**")
+                summary = new_df.groupby('category').agg({'keyword': 'count', 'volume': 'sum'}).reset_index()
+                summary.columns = ['Categorie', 'Mots-cles', 'Volume total']
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+                
+                # Aperçu
+                st.markdown("**Apercu (20 premiers):**")
+                st.dataframe(new_df.head(20)[['keyword', 'category', 'volume']], use_container_width=True, hide_index=True)
             else:
-                # Sélection seeds: top volume si disponible, sinon premiers mots-clés
-                if has_volumes:
-                    top_seeds = df_for_expansion.nlargest(expansion_top_volume, 'volume')['keyword'].tolist()
-                else:
-                    top_seeds = df_for_expansion['keyword'].head(expansion_top_volume).tolist()
-                
-                # Clusters par mots communs
-                clusters = {}
-                for kw in df_for_expansion['keyword'].tolist():
-                    for w in kw.lower().split():
-                        if len(w) > 4:
-                            clusters.setdefault(w, []).append(kw)
-                
-                if has_volumes:
-                    vol_dict = dict(zip(df_for_expansion['keyword'], df_for_expansion['volume']))
-                else:
-                    vol_dict = {kw: 1 for kw in df_for_expansion['keyword'].tolist()}  # Poids égal si pas de volumes
-                cluster_seeds = set()
-                for theme, kws in sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)[:15]:
-                    sorted_kws = sorted(kws, key=lambda k: vol_dict.get(k, 0), reverse=True)
-                    cluster_seeds.update(sorted_kws[:expansion_per_cluster])
-                
-                seeds = list(set(top_seeds) | cluster_seeds)
-                st.info(f"{len(seeds)} mots-cles de base selectionnes (top {expansion_top_volume} + clusters)")
-                
-                # Récupérer related
-                all_related = []
-                progress = st.progress(0)
-                status = st.empty()
-                
-                for i, seed in enumerate(seeds):
-                    status.text(f"{i+1}/{len(seeds)} - {seed[:30]}...")
-                    related = get_related_keywords(
-                        seed,
-                        st.session_state.dataforseo_login,
-                        st.session_state.dataforseo_password,
-                        st.session_state.location_code,
-                        st.session_state.language_code,
-                        related_per_keyword
-                    )
-                    all_related.extend([r['keyword'] for r in related if r['volume'] >= 10])
-                    progress.progress((i + 1) / len(seeds))
-                    time.sleep(0.3)
-                
-                progress.empty()
-                status.empty()
-                
-                unique_related = list(set(all_related))
-                if unique_related:
-                    new_df = pd.DataFrame({'keyword': unique_related, 'source': 'related'})
-                    before = len(st.session_state.df_master)
-                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                    added = len(st.session_state.df_master) - before
-                    
-                    st.success(f"{len(unique_related)} mots-cles lies uniques | {added} nouveaux ajoutes")
-                    st.markdown("**Exemples de mots-cles lies:**")
+                st.warning("Aucun mot-cle trouve avec volume suffisant")
                     st.dataframe(pd.DataFrame({'keyword': unique_related[:15]}), use_container_width=True, hide_index=True)
                 else:
                     st.warning("Aucun mot-cle lie trouve")
