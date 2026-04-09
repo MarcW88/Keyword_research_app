@@ -1193,7 +1193,8 @@ with st.expander("**Etape 4 - Categories**"):
                 st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
                 added = len(st.session_state.df_master) - before
                 
-                st.success(f"{added} categories ajoutees au master | Total: {len(st.session_state.df_master)}")
+                st.session_state.validated_categories = selected_themes
+                st.success(f"{len(selected_themes)} categories validees - Passez a l'etape 5")
                 
                 # Vider la liste temporaire
                 st.session_state.generated_themes = []
