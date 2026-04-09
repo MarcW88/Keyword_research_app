@@ -1641,3 +1641,13 @@ if len(st.session_state.df_master) > 0:
     )
 else:
     st.info("Aucun mot-cle - lancez l'extraction pour commencer")
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+with st.expander("Documentation complete"):
+    try:
+        with open('DOCUMENTATION.md', 'r') as f:
+            st.markdown(f.read())
+    except:
+        st.warning("Fichier DOCUMENTATION.md non trouve")
