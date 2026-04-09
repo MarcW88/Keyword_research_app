@@ -1285,10 +1285,6 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                 st.dataframe(new_df.head(20)[['keyword', 'category', 'volume']], use_container_width=True, hide_index=True)
             else:
                 st.warning("Aucun mot-cle trouve avec volume suffisant")
-                    st.dataframe(pd.DataFrame({'keyword': unique_related[:15]}), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Aucun mot-cle lie trouve")
-
 # ----- ÉTAPE 6 : VOLUMES -----
 with st.expander("**Etape 6 - Recuperer les volumes**"):
     st.markdown("""
