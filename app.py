@@ -356,25 +356,26 @@ def generate_claude_seeds(site_content, existing_keywords, num_seeds, language_c
         
         lang_name = "francais" if language_code == "fr" else "neerlandais"
         
-        prompt = f"""Tu es un expert SEO. Tu dois generer des mots-cles strategiques pour une campagne SEO.
+        prompt = f"""Tu es un expert SEO. Tu dois generer des THEMATIQUES de mots-cles strategiques pour une campagne SEO.
 
 {context}
 
 INSTRUCTIONS:
 1. Base-toi PRINCIPALEMENT sur le document kickoff et les objectifs business
-2. Les mots-cles doivent etre en {lang_name} ({language_code})
-3. Genere des mots-cles qui correspondent aux themes pertinents identifies
-4. Mix de mots-cles:
-   - Transactionnels (acheter, prix, comparatif, meilleur)
-   - Informationnels (comment, guide, qu'est-ce que)
-   - Navigationnels (lies aux produits/services)
-5. Longueur: 2-5 mots par keyword
-6. Ne repete PAS ces keywords existants: {json.dumps(existing_keywords[:20], ensure_ascii=False)}
+2. Les thematiques doivent etre en {lang_name} ({language_code})
+3. Genere UNIQUEMENT des thematiques PERTINENTES pour ce business specifique
+4. IMPORTANT: Ne genere PAS de thematiques juste pour atteindre un nombre. Si seulement 15 thematiques sont vraiment pertinentes, n'en genere que 15.
+5. Chaque thematique doit etre un mot-cle "seed" qui pourra etre expanse (2-4 mots)
+6. Mix de thematiques:
+   - Transactionnelles (acheter, prix, comparatif, meilleur)
+   - Informationnelles (comment, guide, qu'est-ce que)
+   - Navigationnelles (lies aux produits/services)
+7. Ne repete PAS ces keywords existants: {json.dumps(existing_keywords[:20], ensure_ascii=False)}
 
-Genere exactement {num_seeds} mots-cles pertinents pour ce business.
+Genere JUSQU'A {num_seeds} thematiques pertinentes (moins si le business ne justifie pas autant).
 
 Reponds UNIQUEMENT avec ce JSON (pas de texte avant/apres):
-{{"keywords": ["mot-cle 1", "mot-cle 2", ...]}}"""
+{{"keywords": ["thematique 1", "thematique 2", ...]}}"""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -1075,83 +1076,125 @@ with st.expander("**Etape 3 - Extraction concurrents**"):
 with st.expander("**Etape 4 - Thematiques principales**"):
     st.markdown("""
     Cette etape genere les thematiques principales a cibler, basees sur le contexte 
-    business extrait a l'etape 1. Claude analyse le contenu du site, les objectifs 
-    du kickoff, et propose des thematiques strategiques alignees avec les priorites 
-    du client. Ces thematiques serviront de base pour l'expansion des mots-cles.
+    business extrait a l'etape 1. Claude analyse le kickoff et propose des thematiques 
+    strategiques. Vous pouvez ensuite selectionner celles a garder avant l'expansion.
     """)
     
     if 'business_context' not in st.session_state:
         st.warning("Lancez d'abord l'etape 1 (Contexte business) pour generer des thematiques pertinentes.")
     
+    # Initialiser la liste des thématiques si elle n'existe pas
+    if 'generated_themes' not in st.session_state:
+        st.session_state.generated_themes = []
+    
     col1, col2 = st.columns([2, 1])
     with col1:
-        claude_seeds_count = st.number_input("Nombre de thematiques a generer", value=50, min_value=10, max_value=200, key="claude_seeds",
-                                              help="Nombre de mots-cles thematiques a generer. Ces mots-cles serviront de base pour l'expansion.")
+        claude_seeds_count = st.number_input("Nombre max de thematiques", value=30, min_value=5, max_value=100, key="claude_seeds",
+                                              help="Claude generera jusqu'a ce nombre de thematiques, mais seulement celles qui sont pertinentes.")
     with col2:
-        st.metric("Tokens estimes", f"~{claude_seeds_count * 50}")
+        st.metric("Thematiques actuelles", len(st.session_state.generated_themes))
     
     if st.button("Generer les thematiques", key="btn_claude_seeds", use_container_width=True):
-        progress = st.progress(0, text="Récupération contenu du site...")
+        progress = st.progress(0, text="Recuperation contenu du site...")
         site_url = f"https://www.{st.session_state.site}"
         site_content = fetch_page_with_jina(site_url)
         
-        if not site_content:
-            progress.empty()
-            st.warning("Impossible de récupérer le contenu du site")
-        else:
-            progress.progress(30, text="Analyse par Claude...")
-            existing = st.session_state.df_master['keyword'].tolist() if len(st.session_state.df_master) > 0 else []
-            
-            # Récupérer le contexte business et kickoff
-            biz_ctx = st.session_state.get('business_context', None)
-            kickoff = st.session_state.get('kickoff_content', None)
-            
-            seeds = generate_claude_seeds(
-                site_content,
-                existing,
-                claude_seeds_count,
-                st.session_state.language_code,
-                st.session_state.claude_api_key,
-                business_context=biz_ctx,
-                kickoff_content=kickoff
+        progress.progress(30, text="Analyse par Claude...")
+        existing = st.session_state.df_master['keyword'].tolist() if len(st.session_state.df_master) > 0 else []
+        
+        # Récupérer le contexte business et kickoff
+        biz_ctx = st.session_state.get('business_context', None)
+        kickoff = st.session_state.get('kickoff_content', None)
+        
+        seeds = generate_claude_seeds(
+            site_content,
+            existing,
+            claude_seeds_count,
+            st.session_state.language_code,
+            st.session_state.claude_api_key,
+            business_context=biz_ctx,
+            kickoff_content=kickoff
+        )
+        progress.progress(70, text="Validation des volumes...")
+        
+        if seeds:
+            # Valider avec volumes
+            vol_data = fetch_volumes(
+                seeds,
+                st.session_state.dataforseo_login,
+                st.session_state.dataforseo_password,
+                st.session_state.location_code,
+                st.session_state.language_code
             )
-            progress.progress(70, text="Validation des volumes...")
             
-            if seeds:
-                # Valider avec volumes
-                vol_data = fetch_volumes(
-                    seeds,
-                    st.session_state.dataforseo_login,
-                    st.session_state.dataforseo_password,
-                    st.session_state.location_code,
-                    st.session_state.language_code
-                )
-                valid_seeds = [kw for kw in seeds if vol_data.get(kw, {}).get('volume', 0) >= 10]
-                
-                progress.progress(100, text="Terminé!")
-                time.sleep(0.3)
-                progress.empty()
-                
-                if valid_seeds:
-                    # Stocker les volumes déjà récupérés pour éviter un double appel
-                    new_df = pd.DataFrame({
-                        'keyword': valid_seeds, 
-                        'source': 'claude_seeds',
-                        'volume': [vol_data.get(kw, {}).get('volume', 0) for kw in valid_seeds],
-                        'cpc': [vol_data.get(kw, {}).get('cpc', 0.0) for kw in valid_seeds]
-                    })
-                    before = len(st.session_state.df_master)
-                    st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
-                    added = len(st.session_state.df_master) - before
-                    
-                    st.success(f"{len(seeds)} generes, {len(valid_seeds)} avec volume | {added} nouveaux ajoutes")
-                    st.markdown("**Thematiques generees:**")
-                    st.dataframe(pd.DataFrame({'keyword': valid_seeds[:15]}), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Aucune thematique avec volume suffisant")
+            # Créer la liste avec volumes
+            themes_with_vol = []
+            for kw in seeds:
+                vol = vol_data.get(kw, {}).get('volume', 0)
+                themes_with_vol.append({'keyword': kw, 'volume': vol})
+            
+            # Stocker dans session_state (pas encore dans df_master)
+            st.session_state.generated_themes = themes_with_vol
+            st.session_state.themes_vol_data = vol_data
+            
+            progress.progress(100, text="Termine!")
+            time.sleep(0.3)
+            progress.empty()
+            
+            with_vol = sum(1 for t in themes_with_vol if t['volume'] > 0)
+            st.success(f"{len(seeds)} thematiques generees | {with_vol} avec volume de recherche")
+        else:
+            progress.empty()
+            st.warning("Claude n'a pas genere de thematiques")
+    
+    # Afficher et permettre la sélection des thématiques
+    if st.session_state.generated_themes:
+        st.divider()
+        st.markdown("### Selectionner les thematiques a garder")
+        st.caption("Decochez les thematiques non pertinentes avant de valider")
+        
+        # Créer un DataFrame pour l'affichage
+        themes_df = pd.DataFrame(st.session_state.generated_themes)
+        themes_df = themes_df.sort_values('volume', ascending=False)
+        
+        # Multiselect pour choisir les thématiques à garder
+        all_themes = themes_df['keyword'].tolist()
+        selected_themes = st.multiselect(
+            "Thematiques selectionnees",
+            options=all_themes,
+            default=all_themes,
+            key="selected_themes"
+        )
+        
+        # Afficher le tableau avec volumes
+        st.dataframe(themes_df, use_container_width=True, hide_index=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Selectionnees", len(selected_themes))
+        with col2:
+            total_vol = sum(t['volume'] for t in st.session_state.generated_themes if t['keyword'] in selected_themes)
+            st.metric("Volume total", f"{total_vol:,}")
+        
+        if st.button("Valider et ajouter au master", key="btn_validate_themes", use_container_width=True):
+            if not selected_themes:
+                st.warning("Selectionnez au moins une thematique")
             else:
-                progress.empty()
-                st.warning("Claude n'a pas genere de thematiques")
+                vol_data = st.session_state.get('themes_vol_data', {})
+                new_df = pd.DataFrame({
+                    'keyword': selected_themes,
+                    'source': 'theme',
+                    'volume': [vol_data.get(kw, {}).get('volume', 0) for kw in selected_themes],
+                    'cpc': [vol_data.get(kw, {}).get('cpc', 0.0) for kw in selected_themes]
+                })
+                before = len(st.session_state.df_master)
+                st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
+                added = len(st.session_state.df_master) - before
+                
+                st.success(f"{added} thematiques ajoutees au master | Total: {len(st.session_state.df_master)}")
+                
+                # Vider la liste temporaire
+                st.session_state.generated_themes = []
 
 # ----- ÉTAPE 5 : EXPANSION RELATED -----
 with st.expander("**Etape 5 - Expansion (mots-cles lies)**"):
