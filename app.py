@@ -1200,8 +1200,9 @@ with st.expander("**Etape 4 - Thematiques principales**"):
 with st.expander("**Etape 5 - Expansion (mots-cles lies)**"):
     st.markdown("""
     Cette etape elargit la liste en cherchant les mots-cles lies a ceux deja collectes. 
-    Le systeme selectionne les meilleurs mots-cles (par volume et par diversite thematique) 
+    Le systeme selectionne les mots-cles de base (thematiques de l'etape 4 ou mots-cles extraits) 
     et interroge l'API Google Ads pour trouver des variantes et synonymes recherches par les utilisateurs.
+    Les volumes seront recuperes a l'etape 6.
     """)
     
     col1, col2, col3 = st.columns(3)
@@ -1221,25 +1222,43 @@ with st.expander("**Etape 5 - Expansion (mots-cles lies)**"):
     if st.button("Lancer l'expansion", key="btn_expansion", use_container_width=True):
         if len(st.session_state.df_master) == 0:
             st.warning("Lancez d'abord l'extraction (etapes 2-4)")
-        elif 'volume' not in st.session_state.df_master.columns:
-            st.warning("Lancez d'abord l'etape 6 (Volumes) pour avoir les donnees de volume")
         else:
-            df_with_vol = st.session_state.df_master[st.session_state.df_master['volume'] > 0].copy()
-            
-            if len(df_with_vol) == 0:
-                st.warning("Pas de keywords avec volume")
+            # Utiliser les volumes si disponibles, sinon prendre tous les mots-clés
+            if 'volume' in st.session_state.df_master.columns:
+                # Convertir en numérique et remplacer NaN par 0
+                st.session_state.df_master['volume'] = pd.to_numeric(st.session_state.df_master['volume'], errors='coerce').fillna(0)
+                df_with_vol = st.session_state.df_master[st.session_state.df_master['volume'] > 0].copy()
+                if len(df_with_vol) == 0:
+                    # Pas de volumes, utiliser tous les mots-clés
+                    df_for_expansion = st.session_state.df_master.copy()
+                    has_volumes = False
+                else:
+                    df_for_expansion = df_with_vol
+                    has_volumes = True
             else:
-                # Sélection seeds: top volume + clusters
-                top_seeds = df_with_vol.nlargest(expansion_top_volume, 'volume')['keyword'].tolist()
+                df_for_expansion = st.session_state.df_master.copy()
+                has_volumes = False
+            
+            if len(df_for_expansion) == 0:
+                st.warning("Pas de mots-cles disponibles")
+            else:
+                # Sélection seeds: top volume si disponible, sinon premiers mots-clés
+                if has_volumes:
+                    top_seeds = df_for_expansion.nlargest(expansion_top_volume, 'volume')['keyword'].tolist()
+                else:
+                    top_seeds = df_for_expansion['keyword'].head(expansion_top_volume).tolist()
                 
                 # Clusters par mots communs
                 clusters = {}
-                for kw in df_with_vol['keyword'].tolist():
+                for kw in df_for_expansion['keyword'].tolist():
                     for w in kw.lower().split():
                         if len(w) > 4:
                             clusters.setdefault(w, []).append(kw)
                 
-                vol_dict = dict(zip(df_with_vol['keyword'], df_with_vol['volume']))
+                if has_volumes:
+                    vol_dict = dict(zip(df_for_expansion['keyword'], df_for_expansion['volume']))
+                else:
+                    vol_dict = {kw: 1 for kw in df_for_expansion['keyword'].tolist()}  # Poids égal si pas de volumes
                 cluster_seeds = set()
                 for theme, kws in sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)[:15]:
                     sorted_kws = sorted(kws, key=lambda k: vol_dict.get(k, 0), reverse=True)
@@ -1344,9 +1363,15 @@ with st.expander("**Etape 6 - Recuperer les volumes**"):
                 st.success(f"✅ {len(keywords_to_fetch)} volumes récupérés — {with_vol}/{len(st.session_state.df_master)} avec volume | Total: {total_vol:,.0f}")
                 
                 # Aperçu top volumes
-                st.markdown("**📋 Top 10 par volume :**")
-                top_vol = st.session_state.df_master.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
-                st.dataframe(top_vol, use_container_width=True, hide_index=True)
+                st.markdown("**Top 10 par volume:**")
+                try:
+                    # S'assurer que volume est numérique
+                    df_display = st.session_state.df_master.copy()
+                    df_display['volume'] = pd.to_numeric(df_display['volume'], errors='coerce').fillna(0)
+                    top_vol = df_display.nlargest(10, 'volume')[['keyword', 'volume', 'cpc']]
+                    st.dataframe(top_vol, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.warning(f"Impossible d'afficher le top volumes: {e}")
 
 # ----- ÉTAPE 7 : FILTRAGE -----
 with st.expander("**Etape 7 - Filtrage**"):
