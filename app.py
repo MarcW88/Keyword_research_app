@@ -1273,6 +1273,11 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                 
                 # Dédupliquer en gardant le premier (donc la première catégorie trouvée)
                 new_df = new_df.drop_duplicates(subset='keyword', keep='first')
+
+                # Filtrer les mots-clés qui existent déjà dans df_master
+                existing_keywords = set(st.session_state.df_master['keyword'].tolist())
+                new_df = new_df[~new_df['keyword'].isin(existing_keywords)]
+
                 
                 before = len(st.session_state.df_master)
                 
