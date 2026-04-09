@@ -1082,6 +1082,16 @@ with st.expander("**Etape 4 - Categories**"):
     les mots-cles par theme. Selectionnez les categories pertinentes avant de continuer.
     """)
     
+    # Option A: Saisie manuelle
+    st.markdown("**Option A: Saisir manuellement**")
+    manual_cats = st.text_area("Categories (1 par ligne)", height=100, key="manual_cats_input")
+    if st.button("Valider categories manuelles", key="btn_manual_cats"):
+        cats = [c.strip() for c in manual_cats.split('\n') if c.strip()]
+        if cats:
+            st.session_state.validated_categories = cats
+            st.success(f"{len(cats)} categories validees")
+    st.divider()
+    st.markdown("**Option B: Generer avec Claude**")
     if 'business_context' not in st.session_state:
         st.warning("Lancez d'abord l'etape 1 (Contexte business) pour generer des thematiques pertinentes.")
     
