@@ -256,11 +256,28 @@ if 'config_saved' not in st.session_state:
 # API FUNCTIONS
 # =============================================================================
 def call_claude_sonnet(client, prompt, max_tokens):
-    return client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}]
-    )
+    last_error = None
+
+    for attempt in range(4):
+        try:
+            return client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            )
+        except Exception as e:
+            last_error = e
+            error_text = str(e).lower()
+            is_temporary = any(token in error_text for token in ["529", "overloaded", "rate_limit", "temporarily"])
+
+            if not is_temporary or attempt == 3:
+                raise
+
+            wait_seconds = 2 ** attempt
+            st.warning(f"Claude est temporairement surcharge. Nouvelle tentative dans {wait_seconds}s...")
+            time.sleep(wait_seconds)
+
+    raise last_error
 
 def get_auth_header(login, password):
     creds = f"{login}:{password}"
