@@ -11,6 +11,14 @@ import re
 from io import BytesIO
 import anthropic
 
+try:
+    from docx import Document
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+
 # Détection de langue
 try:
     from langdetect import detect, DetectorFactory
@@ -325,6 +333,30 @@ def fetch_page_with_jina(url, jina_key=None):
     except:
         return None
 
+def extract_kickoff_text(uploaded_file):
+    filename = uploaded_file.name.lower()
+    content = uploaded_file.read()
+
+    if filename.endswith(('.txt', '.md')):
+        return content.decode('utf-8', errors='ignore')
+
+    if filename.endswith('.docx'):
+        if not DOCX_AVAILABLE:
+            raise RuntimeError("Le support DOCX nécessite la dépendance python-docx")
+
+        document = Document(BytesIO(content))
+        parts = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+
+        for table in document.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+
+        return "\n".join(parts)
+
+    return content.decode('utf-8', errors='ignore')
+
 def generate_claude_seeds(site_content, existing_keywords, num_seeds, language_code, claude_api_key, business_context=None, kickoff_content=None):
     """Génère des seeds via Claude en analysant le kickoff et le contexte business"""
     try:
@@ -380,7 +412,7 @@ Reponds UNIQUEMENT avec ce JSON (pas de texte avant/apres):
 {{"keywords": ["categorie 1", "categorie 2", ...]}}"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=4000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -489,7 +521,7 @@ Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
 }}"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -574,7 +606,7 @@ JSON uniquement:
 {{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": [...], "off_topic": [...]}}}}"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=16000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -656,7 +688,7 @@ Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
 {{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": ["..."], "wrong_language": ["..."], "locations": ["..."], "off_topic": ["..."]}}}}"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=16000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -678,7 +710,7 @@ Pour chaque thème, génère {keywords_per_theme} keywords variés (transactionn
 JSON: {{"theme1": ["kw1", ...], "theme2": [...]}}"""
         
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=8000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -701,7 +733,7 @@ Keywords: {json.dumps(kw_list, ensure_ascii=False)}
 JSON: {{"categories": {{"Catégorie1": ["kw1", "kw2", ...], "Catégorie2": [...]}}}}"""
         
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=8000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -814,13 +846,7 @@ with st.sidebar:
     # Stocker le contenu du kickoff
     if kickoff_file:
         try:
-            if kickoff_file.name.endswith('.txt') or kickoff_file.name.endswith('.md'):
-                st.session_state.kickoff_content = kickoff_file.read().decode('utf-8')
-            elif kickoff_file.name.endswith('.pdf'):
-                # Pour PDF, on lit le texte brut (simplifié)
-                st.session_state.kickoff_content = kickoff_file.read().decode('utf-8', errors='ignore')
-            else:
-                st.session_state.kickoff_content = kickoff_file.read().decode('utf-8', errors='ignore')
+            st.session_state.kickoff_content = extract_kickoff_text(kickoff_file)
             st.success(f"✅ Kickoff chargé ({len(st.session_state.kickoff_content)} caractères)")
         except Exception as e:
             st.error(f"Erreur lecture: {e}")
