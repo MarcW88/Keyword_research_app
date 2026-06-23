@@ -17,7 +17,7 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
 
 # Détection de langue
 try:
@@ -36,8 +36,12 @@ st.set_page_config(
 # API Keys from Streamlit secrets
 DATAFORSEO_LOGIN = st.secrets.get("DATAFORSEO_LOGIN", "")
 DATAFORSEO_PASSWORD = st.secrets.get("DATAFORSEO_PASSWORD", "")
-# Claude key split in 3 parts for security
-CLAUDE_API_KEY = st.secrets.get("CLAUDE_API_KEY_1", "") + st.secrets.get("CLAUDE_API_KEY_2", "") + st.secrets.get("CLAUDE_API_KEY_3", "")
+CLAUDE_API_KEY = st.secrets.get("CLAUDE_API_KEY", "") or (
+    st.secrets.get("CLAUDE_API_KEY_1", "")
+    + st.secrets.get("CLAUDE_API_KEY_2", "")
+    + st.secrets.get("CLAUDE_API_KEY_3", "")
+)
+CLAUDE_MODEL = st.secrets.get("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL)
 JINA_API_KEY = st.secrets.get("JINA_API_KEY", "")
 
 # =============================================================================
@@ -251,6 +255,13 @@ if 'config_saved' not in st.session_state:
 # =============================================================================
 # API FUNCTIONS
 # =============================================================================
+def call_claude_sonnet(client, prompt, max_tokens):
+    return client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
 def get_auth_header(login, password):
     creds = f"{login}:{password}"
     return {
@@ -411,11 +422,7 @@ Genere JUSQU'A {num_seeds} categories pertinentes (moins si le business ne justi
 Reponds UNIQUEMENT avec ce JSON (pas de texte avant/apres):
 {{"keywords": ["categorie 1", "categorie 2", ...]}}"""
 
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = call_claude_sonnet(client, prompt, 4000)
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
         if match:
             return json.loads(match.group()).get('keywords', [])
@@ -520,11 +527,7 @@ Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
     "competitor_type": "type de concurrents à exclure (ex: 'banques traditionnelles', 'grandes surfaces')"
 }}"""
 
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = call_claude_sonnet(client, prompt, 2000)
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
         if match:
             return json.loads(match.group())
@@ -605,11 +608,7 @@ En cas de doute, GARDE TOUJOURS le keyword.
 JSON uniquement:
 {{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": [...], "off_topic": [...]}}}}"""
 
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=16000,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = call_claude_sonnet(client, prompt, 16000)
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
         if match:
             return json.loads(match.group())
@@ -687,11 +686,7 @@ Ne filtre QUE les keywords qui sont CLAIREMENT hors-sujet ou brandés concurrent
 Réponds UNIQUEMENT avec ce JSON (pas de texte avant/après):
 {{"relevant": ["kw1", "kw2", ...], "filtered_out": {{"competitor_brands": ["..."], "wrong_language": ["..."], "locations": ["..."], "off_topic": ["..."]}}}}"""
 
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=16000,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = call_claude_sonnet(client, prompt, 16000)
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
         if match:
             return json.loads(match.group())
@@ -709,11 +704,7 @@ Thématiques: {json.dumps(themes, ensure_ascii=False)}
 Pour chaque thème, génère {keywords_per_theme} keywords variés (transactionnel + informationnel, 2-4 mots).
 JSON: {{"theme1": ["kw1", ...], "theme2": [...]}}"""
         
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = call_claude_sonnet(client, prompt, 8000)
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
         if match:
             return json.loads(match.group())
@@ -732,11 +723,7 @@ def categorize_with_claude(keywords, site_domain, claude_api_key):
 Keywords: {json.dumps(kw_list, ensure_ascii=False)}
 JSON: {{"categories": {{"Catégorie1": ["kw1", "kw2", ...], "Catégorie2": [...]}}}}"""
         
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = call_claude_sonnet(client, prompt, 8000)
         match = re.search(r'\{[\s\S]*\}', response.content[0].text)
         if match:
             result = json.loads(match.group())
