@@ -292,6 +292,8 @@ def get_location_config(language):
         "be_fr": {"code": 2056, "lang": "fr"},
         "fr": {"code": 2250, "lang": "fr"},
         "nl": {"code": 2528, "lang": "nl"},
+        "uk": {"code": 2826, "lang": "en"},
+        "us": {"code": 2840, "lang": "en"},
     }
     return loc_map.get(language, {"code": 2056, "lang": "nl"})
 
@@ -414,7 +416,8 @@ def generate_claude_seeds(site_content, existing_keywords, num_seeds, language_c
         
         context = "\n".join(context_parts) if context_parts else "Pas de contexte disponible"
         
-        lang_name = "francais" if language_code == "fr" else "neerlandais"
+        _lang_names = {"nl": "neerlandais", "fr": "francais", "en": "anglais"}
+        lang_name = _lang_names.get(language_code, language_code)
         
         prompt = f"""Tu es un expert SEO. Tu dois generer des CATEGORIES de mots-cles pour structurer une campagne SEO.
 
@@ -568,8 +571,9 @@ def filter_with_claude_v2(keywords, site_domain, language_code, claude_api_key, 
                     competitor_brands.append(brand)
         
         # Langue cible
-        lang_name = "néerlandais" if language_code == "nl" else "français"
-        other_lang = "français" if language_code == "nl" else "néerlandais"
+        _lang_names = {"nl": "néerlandais", "fr": "français", "en": "anglais"}
+        lang_name = _lang_names.get(language_code, language_code)
+        other_lang = " ou ".join(v for k, v in _lang_names.items() if k != language_code)
         
         # Construire le contexte business
         context_section = ""
@@ -650,8 +654,9 @@ def filter_with_claude(keywords, site_domain, language_code, claude_api_key, com
                     competitor_brands.append(brand)
         
         # Langue cible en texte clair
-        lang_name = "néerlandais" if language_code == "nl" else "français"
-        other_lang = "français" if language_code == "nl" else "néerlandais"
+        _lang_names = {"nl": "néerlandais", "fr": "français", "en": "anglais"}
+        lang_name = _lang_names.get(language_code, language_code)
+        other_lang = " ou ".join(v for k, v in _lang_names.items() if k != language_code)
         
         # Contexte du site (si disponible)
         context_section = ""
@@ -833,7 +838,7 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     
     site = st.text_input("Site client", value="")
-    language = st.selectbox("Marché", ["be_nl", "be_fr", "fr", "nl"], index=0)
+    language = st.selectbox("Marché", ["be_nl", "be_fr", "fr", "nl", "uk", "us"], index=0)
     competitors_input = st.text_area(
         "Concurrents (1 par ligne)",
         value=""
