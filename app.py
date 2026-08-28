@@ -761,14 +761,25 @@ def get_related_keywords(keyword, login, password, location_code, language_code,
         r = requests.post("https://api.dataforseo.com/v3/keywords_data/google_ads/keywords_for_keywords/live",
             headers=get_auth_header(login, password),
             json=[{"location_code": location_code, "language_code": language_code,
-                "keywords": [keyword.lower().strip()]}], timeout=60)
+                "keywords": [keyword.lower().strip()], "limit": limit}], timeout=30)
         data = r.json()
         if data.get('status_code') != 20000:
-            return []
-        return [{'keyword': item.get('keyword', ''), 'volume': item.get('search_volume', 0) or 0}
-                for item in (data.get('tasks', [{}])[0].get('result', []) or [])[:limit]]
-    except:
-        return []
+            return {'error': f"API error {data.get('status_code')}: {data.get('status_message', '')}", 'results': []}
+        tasks = data.get('tasks') or []
+        if not tasks:
+            return {'error': 'Empty tasks list', 'results': []}
+        task = tasks[0]
+        task_status = task.get('status_code')
+        if task_status != 20000:
+            return {'error': f"Task error {task_status}: {task.get('status_message', '')}", 'results': []}
+        result = task.get('result') or []
+        keywords = [{'keyword': item.get('keyword', ''), 'volume': item.get('search_volume', 0) or 0}
+                    for item in result[:limit]]
+        return {'error': None, 'results': keywords}
+    except requests.exceptions.Timeout:
+        return {'error': 'Timeout (30s) — DataForSEO trop lent', 'results': []}
+    except Exception as e:
+        return {'error': str(e), 'results': []}
 
 def analyze_serp(keyword, login, password, location_code, language_code, client_domains, competitors):
     """Analyze SERP for a keyword"""
@@ -985,7 +996,8 @@ with st.expander("**Etape 1 - Contexte business**", expanded=True):
     # Afficher le contexte si disponible
     if 'business_context' in st.session_state and st.session_state.business_context:
         ctx = st.session_state.business_context
-        with st.expander("Contexte business extrait", expanded=True):
+        with st.container(border=True):
+            st.markdown("**Contexte business extrait**")
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown(f"**Type de business:** {ctx.get('business_type', 'N/A')}")
@@ -1006,7 +1018,8 @@ with st.expander("**Etape 1 - Contexte business**", expanded=True):
                     st.caption(f"- {theme}")
     
     if 'site_content_raw' in st.session_state and st.session_state.site_content_raw:
-        with st.expander("Contenu brut scrape"):
+        with st.container(border=True):
+            st.markdown("**Contenu brut scrape**")
             st.text(st.session_state.site_content_raw[:3000] + "...")
 
 # ----- ÉTAPE 2 : EXTRACTION SITE -----
@@ -1271,6 +1284,7 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
         
         if st.button("Lancer l'expansion par categorie", key="btn_expansion", use_container_width=True):
             all_keywords = []
+            errors_log = []
             progress = st.progress(0)
             status = st.empty()
             
@@ -1278,7 +1292,7 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                 status.text(f"{i+1}/{len(categories)} - {category}...")
                 
                 # Récupérer les mots-clés liés pour cette catégorie
-                related = get_related_keywords(
+                result = get_related_keywords(
                     category,
                     st.session_state.dataforseo_login,
                     st.session_state.dataforseo_password,
@@ -1287,8 +1301,11 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                     related_per_category
                 )
                 
+                if result['error']:
+                    errors_log.append(f"⚠️ {category}: {result['error']}")
+                
                 # Ajouter avec la catégorie comme tag
-                for r in related:
+                for r in result['results']:
                     if r['volume'] >= 10:  # Filtrer les volumes trop faibles
                         all_keywords.append({
                             'keyword': r['keyword'],
@@ -1298,10 +1315,15 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                         })
                 
                 progress.progress((i + 1) / len(categories))
-                time.sleep(0.3)
+                time.sleep(1)
             
             progress.empty()
             status.empty()
+            
+            if errors_log:
+                with st.expander(f"⚠️ {len(errors_log)} erreurs API (cliquer pour voir)"):
+                    for err in errors_log:
+                        st.caption(err)
             
             if all_keywords:
                 new_df = pd.DataFrame(all_keywords)
@@ -1310,7 +1332,7 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                 new_df = new_df.drop_duplicates(subset='keyword', keep='first')
 
                 # Filtrer les mots-clés qui existent déjà dans df_master
-                existing_keywords = set(st.session_state.df_master['keyword'].tolist())
+                existing_keywords = set(st.session_state.df_master['keyword'].tolist() if 'keyword' in st.session_state.df_master.columns else [])
                 new_df = new_df[~new_df['keyword'].isin(existing_keywords)]
 
                 
