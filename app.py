@@ -8,7 +8,9 @@ import json
 import base64
 import time
 import re
+import hashlib
 from io import BytesIO
+from pathlib import Path
 import anthropic
 
 try:
@@ -286,6 +288,73 @@ def get_auth_header(login, password):
         'Content-Type': 'application/json'
     }
 
+DFS_BASE_URL = "https://api.dataforseo.com/v3/"
+DFS_CACHE_DIR = Path(__file__).parent / ".cache" / "dataforseo"
+DFS_CACHE_TTL_DAYS = {"serp": 7, "default": 30}
+SERP_CACHE_KEY = "serp/google/organic/advanced"
+
+# Tarifs DataForSEO en USD — https://dataforseo.com/pricing
+PRICE_SERP_PAGE = {"live": 0.002, "standard": 0.0006}  # par tranche de 10 resultats
+PRICE_GOOGLE_ADS_TASK_LIVE = 0.09  # par tache (search_volume: jusqu'a 1000 mots-cles)
+PRICE_LABS_TASK = 0.012
+PRICE_LABS_ITEM = 0.00012
+SEARCH_VOLUME_BATCH_SIZE = 1000
+
+
+def serp_cost_per_keyword(depth, mode, ai_overview):
+    pages = -(-int(depth) // 10)
+    return (pages + (1 if ai_overview else 0)) * PRICE_SERP_PAGE[mode]
+
+
+def labs_cost(items_per_task, tasks=1):
+    return tasks * (PRICE_LABS_TASK + items_per_task * PRICE_LABS_ITEM)
+
+
+def _cache_path(cache_key, payload):
+    digest = hashlib.sha256(json.dumps([cache_key, payload], sort_keys=True).encode()).hexdigest()
+    return DFS_CACHE_DIR / f"{digest}.json"
+
+
+def cache_get(cache_key, payload):
+    if not st.session_state.get("use_api_cache", True):
+        return None
+    path = _cache_path(cache_key, payload)
+    ttl_days = DFS_CACHE_TTL_DAYS["serp" if cache_key.startswith("serp/") else "default"]
+    if not path.exists() or time.time() - path.stat().st_mtime > ttl_days * 86400:
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def cache_set(cache_key, payload, data):
+    try:
+        DFS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _cache_path(cache_key, payload).write_text(json.dumps(data))
+    except OSError:
+        pass
+
+
+def _task_ok(data):
+    tasks = data.get("tasks") or []
+    return data.get("status_code") == 20000 and bool(tasks) and tasks[0].get("status_code") == 20000
+
+
+def dfs_post(endpoint, payload, login, password, timeout, cache_key=None):
+    """POST d'une tache DataForSEO, avec cache disque des reponses reussies (evite de repayer)."""
+    cache_key = cache_key or endpoint
+    cached = cache_get(cache_key, payload)
+    if cached is not None:
+        return cached
+    r = requests.post(DFS_BASE_URL + endpoint, headers=get_auth_header(login, password),
+                      json=[payload], timeout=timeout)
+    data = r.json()
+    if _task_ok(data):
+        cache_set(cache_key, payload, data)
+    return data
+
+
 def get_location_config(language):
     loc_map = {
         "be_nl": {"code": 2056, "lang": "nl"},
@@ -300,19 +369,17 @@ def get_location_config(language):
 def fetch_volumes(keywords, login, password, location_code, language_code):
     """Fetch search volumes via DataForSEO"""
     all_results = {}
-    batch_size = 700
+    batch_size = SEARCH_VOLUME_BATCH_SIZE
     batches = [keywords[i:i+batch_size] for i in range(0, len(keywords), batch_size)]
     
     progress = st.progress(0)
     for i, batch in enumerate(batches):
         try:
-            r = requests.post(
-                "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live",
-                headers=get_auth_header(login, password),
-                json=[{"keywords": batch, "location_code": location_code, "language_code": language_code}],
-                timeout=120
+            data = dfs_post(
+                "keywords_data/google_ads/search_volume/live",
+                {"keywords": batch, "location_code": location_code, "language_code": language_code},
+                login, password, timeout=120
             )
-            data = r.json()
             if data.get('status_code') == 20000:
                 for item in (data.get('tasks', [{}])[0].get('result', []) or []):
                     kw = item.get('keyword', '')
@@ -330,26 +397,35 @@ def fetch_volumes(keywords, login, password, location_code, language_code):
     return all_results
 
 def extract_keywords_from_site(domain, login, password, location_code, language_code, limit=100):
-    """Extract ranked keywords from a domain"""
+    """Extract ranked keywords (avec volume et CPC, deja inclus dans la reponse) from a domain"""
     try:
-        r = requests.post(
-            "https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live",
-            headers=get_auth_header(login, password),
-            json=[{
+        data = dfs_post(
+            "dataforseo_labs/google/ranked_keywords/live",
+            {
                 "target": domain,
                 "location_code": location_code,
                 "language_code": language_code,
                 "limit": limit,
                 "order_by": ["keyword_data.keyword_info.search_volume,desc"]
-            }],
-            timeout=90
+            },
+            login, password, timeout=90
         )
-        data = r.json()
         if data.get('status_code') != 20000:
             return []
         items = data.get('tasks', [{}])[0].get('result', [{}])[0].get('items', []) or []
-        return [item.get('keyword_data', {}).get('keyword', '') for item in items[:limit]]
-    except:
+        rows = []
+        for item in items[:limit]:
+            keyword_data = item.get('keyword_data') or {}
+            info = keyword_data.get('keyword_info') or {}
+            if not keyword_data.get('keyword'):
+                continue
+            rows.append({
+                'keyword': keyword_data['keyword'],
+                'volume': info.get('search_volume') or 0 if info else None,
+                'cpc': info.get('cpc') or 0.0 if info else None,
+            })
+        return rows
+    except Exception:
         return []
 
 def fetch_page_with_jina(url, jina_key=None):
@@ -758,11 +834,10 @@ JSON: {{"categories": {{"Catégorie1": ["kw1", "kw2", ...], "Catégorie2": [...]
 def get_related_keywords(keyword, login, password, location_code, language_code, limit=30):
     """Keywords liés via Google Ads API"""
     try:
-        r = requests.post("https://api.dataforseo.com/v3/keywords_data/google_ads/keywords_for_keywords/live",
-            headers=get_auth_header(login, password),
-            json=[{"location_code": location_code, "language_code": language_code,
-                "keywords": [keyword.lower().strip()], "limit": limit}], timeout=30)
-        data = r.json()
+        data = dfs_post("keywords_data/google_ads/keywords_for_keywords/live",
+            {"location_code": location_code, "language_code": language_code,
+             "keywords": [keyword.lower().strip()], "limit": limit},
+            login, password, timeout=30)
         if data.get('status_code') != 20000:
             return {'error': f"API error {data.get('status_code')}: {data.get('status_message', '')}", 'results': []}
         tasks = data.get('tasks') or []
@@ -781,10 +856,47 @@ def get_related_keywords(keyword, login, password, location_code, language_code,
     except Exception as e:
         return {'error': str(e), 'results': []}
 
-def analyze_serp(keyword, login, password, location_code, language_code, client_domains, competitors):
-    """Analyze SERP for a keyword"""
+def get_keyword_ideas_labs(keyword, login, password, location_code, language_code, limit=30):
+    """Keywords lies via DataForSEO Labs keyword_ideas (moins cher que Google Ads live)"""
+    try:
+        data = dfs_post("dataforseo_labs/google/keyword_ideas/live",
+            {"location_code": location_code, "language_code": language_code,
+             "keywords": [keyword.lower().strip()], "limit": limit},
+            login, password, timeout=60)
+        if data.get('status_code') != 20000:
+            return {'error': f"API error {data.get('status_code')}: {data.get('status_message', '')}", 'results': []}
+        task = (data.get('tasks') or [{}])[0]
+        if task.get('status_code') != 20000:
+            return {'error': f"Task error {task.get('status_code')}: {task.get('status_message', '')}", 'results': []}
+        result = (task.get('result') or [{}])[0] or {}
+        keywords = [{'keyword': item.get('keyword', ''),
+                     'volume': (item.get('keyword_info') or {}).get('search_volume', 0) or 0}
+                    for item in (result.get('items') or [])[:limit]]
+        return {'error': None, 'results': keywords}
+    except requests.exceptions.Timeout:
+        return {'error': 'Timeout (60s) — DataForSEO trop lent', 'results': []}
+    except Exception as e:
+        return {'error': str(e), 'results': []}
+
+
+def _serp_payload(keyword, location_code, language_code, depth, ai_overview):
+    payload = {
+        "keyword": keyword,
+        "location_code": location_code,
+        "language_code": language_code,
+        "device": "desktop",
+        "depth": int(depth),
+    }
+    if ai_overview:
+        payload["load_async_ai_overview"] = True
+        payload["expand_ai_overview"] = True
+    return payload
+
+
+def _empty_serp_output(keyword, competitors):
     output = {
         'keyword': keyword,
+        'serp_scanned': False,
         'client_pos': None,
         'client_url': '',
         'has_ai_overview': False,
@@ -792,55 +904,120 @@ def analyze_serp(keyword, login, password, location_code, language_code, client_
     }
     for c in competitors:
         output[f'{c}_pos'] = None
+    return output
 
+
+def parse_serp_response(keyword, data, client_domains, competitors):
+    """Extrait positions client/concurrents d'une reponse SERP (live ou task_get)"""
+    output = _empty_serp_output(keyword, competitors)
+    if not _task_ok(data):
+        return output
+    result = (data['tasks'][0].get('result') or [None])[0]
+    if not result:
+        return output
+
+    for item in result.get('items', []) or []:
+        if item.get('type') == 'organic':
+            domain = (item.get('domain') or '').lower().replace('www.', '')
+            pos = item.get('rank_absolute', 0)
+            url = item.get('url', '')
+
+            if output['client_pos'] is None:
+                if any(cd.lower() in domain for cd in client_domains):
+                    output['client_pos'] = pos
+                    output['client_url'] = url
+
+            for comp in competitors:
+                col = f'{comp}_pos'
+                if output[col] is None:
+                    if comp.lower().replace('www.', '') in domain:
+                        output[col] = pos
+
+    output['has_ai_overview'] = 'ai_overview' in (result.get('item_types', []) or [])
+    output['serp_scanned'] = True
+    return output
+
+
+def analyze_serp(keyword, login, password, location_code, language_code, client_domains, competitors,
+                 depth=30, ai_overview=True):
+    """Analyze SERP for a keyword (mode Live)"""
+    payload = _serp_payload(keyword, location_code, language_code, depth, ai_overview)
     try:
-        r = requests.post(
-            "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
-            headers=get_auth_header(login, password),
-            json=[{
-                "keyword": keyword,
-                "location_code": location_code,
-                "language_code": language_code,
-                "device": "desktop",
-                "depth": 100,
-                "load_async_ai_overview": True,
-                "expand_ai_overview": True
-            }],
-            timeout=90
-        )
-        data = r.json()
-        if data.get('status_code') != 20000:
-            return output
+        data = dfs_post("serp/google/organic/live/advanced", payload, login, password,
+                        timeout=90, cache_key=SERP_CACHE_KEY)
+        return parse_serp_response(keyword, data, client_domains, competitors)
+    except Exception:
+        return _empty_serp_output(keyword, competitors)
 
-        task = data.get('tasks', [{}])[0]
-        result = task.get('result', [None])[0]
-        if not result:
-            return output
 
-        items = result.get('items', []) or []
-        item_types = result.get('item_types', []) or []
+def analyze_serp_standard(keywords, login, password, location_code, language_code, client_domains, competitors,
+                          depth, ai_overview, pending_tasks, on_progress=None, max_wait_s=2700):
+    """Analyse SERP en mode Standard (file d'attente): task_post par lots de 100, puis task_get.
 
-        for item in items:
-            if item.get('type') == 'organic':
-                domain = (item.get('domain') or '').lower().replace('www.', '')
-                pos = item.get('rank_absolute', 0)
-                url = item.get('url', '')
+    pending_tasks (task_id -> keyword) est mis a jour en place: les taches deja payees mais pas
+    encore recuperees sont reutilisees au lieu d'etre reposees.
+    """
+    headers = get_auth_header(login, password)
+    payloads = {kw: _serp_payload(kw, location_code, language_code, depth, ai_overview) for kw in keywords}
+    results = {}
+    already_pending = set(pending_tasks.values())
 
-                if output['client_pos'] is None:
-                    if any(cd.lower() in domain for cd in client_domains):
-                        output['client_pos'] = pos
-                        output['client_url'] = url
+    to_post = []
+    for kw, payload in payloads.items():
+        cached = cache_get(SERP_CACHE_KEY, payload)
+        if cached is not None:
+            results[kw] = parse_serp_response(kw, cached, client_domains, competitors)
+        elif kw not in already_pending:
+            to_post.append(kw)
 
-                for comp in competitors:
-                    col = f'{comp}_pos'
-                    if output[col] is None:
-                        if comp.lower().replace('www.', '') in domain:
-                            output[col] = pos
+    for i in range(0, len(to_post), 100):
+        chunk = to_post[i:i + 100]
+        tasks_payload = [{**payloads[kw], "tag": str(j)} for j, kw in enumerate(chunk)]
+        try:
+            r = requests.post(DFS_BASE_URL + "serp/google/organic/task_post", headers=headers,
+                              json=tasks_payload, timeout=60)
+            for task in r.json().get('tasks') or []:
+                tag = (task.get('data') or {}).get('tag')
+                if task.get('status_code') == 20100 and tag is not None and tag.isdigit():
+                    pending_tasks[task['id']] = chunk[int(tag)]
+        except (requests.RequestException, ValueError):
+            pass
 
-        output['has_ai_overview'] = 'ai_overview' in item_types
-        return output
-    except:
-        return output
+    wanted = set(keywords)
+    start = time.time()
+    while any(kw in wanted for kw in pending_tasks.values()) and time.time() - start < max_wait_s:
+        if on_progress:
+            on_progress(len(results), len(keywords))
+        time.sleep(15)
+        for task_id, kw in list(pending_tasks.items()):
+            if kw not in wanted:
+                continue
+            try:
+                data = requests.get(DFS_BASE_URL + f"serp/google/organic/task_get/advanced/{task_id}",
+                                    headers=headers, timeout=60).json()
+            except (requests.RequestException, ValueError):
+                continue
+            task = (data.get('tasks') or [{}])[0]
+            status_code = task.get('status_code')
+            if status_code == 20000:
+                cache_set(SERP_CACHE_KEY, payloads.get(kw) or _serp_payload(kw, location_code, language_code, depth, ai_overview), data)
+                results[kw] = parse_serp_response(kw, data, client_domains, competitors)
+                del pending_tasks[task_id]
+            elif status_code not in (40601, 40602):
+                del pending_tasks[task_id]
+
+    return [results.get(kw) or _empty_serp_output(kw, competitors) for kw in keywords]
+
+
+def serp_scanned_mask(df):
+    if 'serp_scanned' in df.columns:
+        return df['serp_scanned'].eq(True)
+    if 'has_ai_overview' in df.columns:
+        return df['has_ai_overview'].notna()
+    if 'client_pos' in df.columns:
+        return df['client_pos'].notna()
+    return pd.Series(False, index=df.index)
+
 
 # =============================================================================
 # SIDEBAR — CONFIG
@@ -884,6 +1061,18 @@ with st.sidebar:
     st.session_state.location_code = loc["code"]
     st.session_state.language_code = loc["lang"]
     st.session_state.client_domains = [site.replace("www.", ""), f"www.{site.replace('www.', '')}"]
+
+    st.divider()
+    st.markdown("### 💾 Cache API")
+    st.checkbox("Reutiliser les reponses DataForSEO deja payees", value=True, key="use_api_cache",
+                help="Les reponses reussies sont gardees sur disque (SERP: 7 jours, autres: 30 jours). "
+                     "Decocher pour forcer un nouvel appel payant.")
+    cached_files = list(DFS_CACHE_DIR.glob("*.json")) if DFS_CACHE_DIR.exists() else []
+    st.caption(f"{len(cached_files)} reponses en cache")
+    if cached_files and st.button("Vider le cache", key="btn_clear_cache"):
+        for f in cached_files:
+            f.unlink(missing_ok=True)
+        st.rerun()
 
 # =============================================================================
 # MAIN
@@ -1036,7 +1225,7 @@ with st.expander("**Etape 2 - Extraction site client**"):
         extract_site_limit = st.number_input("Nombre de mots-cles a extraire", value=100, min_value=10, max_value=1000, key="extract_site",
                                               help="Plus ce nombre est eleve, plus vous aurez de donnees mais plus le cout sera important.")
     with col2:
-        st.metric("Cout estime", f"~{extract_site_limit * 0.002:.2f} EUR")
+        st.metric("Cout estime", f"~${labs_cost(extract_site_limit):.3f}")
     
     if st.button("Extraire du site client", key="btn_extract_site", use_container_width=True):
         progress = st.progress(0, text="Connexion a DataForSEO...")
@@ -1055,12 +1244,12 @@ with st.expander("**Etape 2 - Extraction site client**"):
         progress.empty()
         
         if kws:
-            new_df = pd.DataFrame({'keyword': kws, 'source': 'client_site'})
+            new_df = pd.DataFrame(kws).assign(source='client_site')
             st.session_state.df_master = pd.concat([st.session_state.df_master, new_df]).drop_duplicates(subset='keyword')
             st.success(f"{len(kws)} mots-cles extraits | Total: {len(st.session_state.df_master)}")
             
             st.markdown("**Apercu (10 premiers):**")
-            st.dataframe(pd.DataFrame({'keyword': kws[:10]}), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(kws[:10]), use_container_width=True, hide_index=True)
         else:
             st.warning("Aucun mot-cle trouve pour ce domaine")
 
@@ -1084,7 +1273,7 @@ with st.expander("**Etape 3 - Extraction concurrents**"):
     with col2:
         total_comp = len(competitors_to_extract) * extract_comp_limit
         st.metric("Mots-cles estimes", f"~{total_comp}")
-        st.metric("Cout estime", f"~{total_comp * 0.002:.2f} EUR")
+        st.metric("Cout estime", f"~${labs_cost(extract_comp_limit, len(competitors_to_extract)):.3f}")
     
     if st.button("Extraire des concurrents", key="btn_extract_comp", use_container_width=True):
         all_kws = []
@@ -1101,7 +1290,7 @@ with st.expander("**Etape 3 - Extraction concurrents**"):
                 st.session_state.language_code,
                 extract_comp_limit
             )
-            all_kws.extend([{'keyword': kw, 'source': f'competitor:{comp}'} for kw in kws])
+            all_kws.extend([{**kw, 'source': f'competitor:{comp}'} for kw in kws])
             progress.progress((i + 1) / len(competitors_to_extract))
             time.sleep(0.5)
         
@@ -1280,7 +1469,15 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
             estimated_total = len(categories) * related_per_category
             st.metric("Mots-cles estimes", f"~{estimated_total}")
         
-        st.caption(f"Cout estime: ~{len(categories) * 0.005:.2f} EUR")
+        expansion_source = st.radio(
+            "Source",
+            ["Google Ads (keywords_for_keywords)", "DataForSEO Labs (keyword_ideas, moins cher)"],
+            key="expansion_source", horizontal=True,
+            help="Google Ads live: $0.09 par categorie. Labs: $0.012 + $0.00012 par mot-cle retourne.")
+        use_labs = expansion_source.startswith("DataForSEO Labs")
+        expansion_cost = (labs_cost(related_per_category, len(categories)) if use_labs
+                          else len(categories) * PRICE_GOOGLE_ADS_TASK_LIVE)
+        st.caption(f"Cout estime: ~${expansion_cost:.2f}")
         
         if st.button("Lancer l'expansion par categorie", key="btn_expansion", use_container_width=True):
             all_keywords = []
@@ -1292,7 +1489,8 @@ with st.expander("**Etape 5 - Expansion par categorie**"):
                 status.text(f"{i+1}/{len(categories)} - {category}...")
                 
                 # Récupérer les mots-clés liés pour cette catégorie
-                result = get_related_keywords(
+                fetch_related = get_keyword_ideas_labs if use_labs else get_related_keywords
+                result = fetch_related(
                     category,
                     st.session_state.dataforseo_login,
                     st.session_state.dataforseo_password,
@@ -1377,7 +1575,8 @@ with st.expander("**Etape 6 - Recuperer les volumes**"):
     with col1:
         st.metric("Mots-cles sans volume", missing_vol)
     with col2:
-        st.metric("Cout estime", f"~{missing_vol * 0.005:.2f} EUR")
+        volume_tasks = -(-int(missing_vol) // SEARCH_VOLUME_BATCH_SIZE)
+        st.metric("Cout estime", f"~${volume_tasks * PRICE_GOOGLE_ADS_TASK_LIVE:.2f}")
     
     if st.button("Recuperer les volumes", key="btn_volumes", use_container_width=True):
         if len(st.session_state.df_master) == 0:
@@ -1584,8 +1783,8 @@ with st.expander("**Etape 8 - Categorisation**"):
 with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
     st.markdown("""
     Cette etape analyse les resultats de recherche Google pour chaque mot-cle. 
-    Elle recupere la position du site client et des concurrents dans les 100 premiers 
-    resultats, et detecte la presence d'AI Overview. Cela permet d'identifier les 
+    Elle recupere la position du site client et des concurrents dans les N premiers 
+    resultats (profondeur configurable), et detecte la presence d'AI Overview. Cela permet d'identifier les 
     opportunites de positionnement et les mots-cles ou l'IA de Google est presente.
     """)
     
@@ -1593,6 +1792,18 @@ with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
     
     # Options SERP
     force_rescan = st.checkbox("Force rescan (tout rescanner)", value=False, key="force_rescan")
+    opt1, opt2, opt3 = st.columns(3)
+    with opt1:
+        serp_depth = st.select_slider("Profondeur (resultats)", options=[10, 20, 30, 50, 100], value=30,
+                                      key="serp_depth",
+                                      help="Facture par tranche de 10 resultats: 100 coute 3,3x plus cher que 30.")
+    with opt2:
+        serp_mode_label = st.radio("Mode", ["Standard (file d'attente, ~5 min)", "Live (immediat)"],
+                                   key="serp_mode", help="Standard: $0.0006 par page de 10. Live: $0.002.")
+        serp_mode = "live" if serp_mode_label.startswith("Live") else "standard"
+    with opt3:
+        serp_ai_overview = st.checkbox("Detecter AI Overview", value=True, key="serp_ai_overview",
+                                       help="Ajoute le prix d'une page par mot-cle.")
     
     # Filtre par catégorie
     categories_list = []
@@ -1608,10 +1819,7 @@ with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
     if force_rescan:
         needs_serp = len(df_to_scan)
     else:
-        if 'client_pos' in df_to_scan.columns:
-            needs_serp = df_to_scan['client_pos'].isna().sum()
-        else:
-            needs_serp = len(df_to_scan)
+        needs_serp = int((~serp_scanned_mask(df_to_scan)).sum())
     
     with col1:
         final_limit = st.number_input("Limite (0 = tous)", value=0, min_value=0, max_value=1000, key="final_limit")
@@ -1619,8 +1827,11 @@ with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
         actual_count = needs_serp if final_limit == 0 else min(final_limit, needs_serp)
         st.metric("Keywords à analyser", actual_count)
     with col3:
-        st.metric("Cout estime", f"~{actual_count * 0.0075:.2f} EUR")
-        st.caption(f"Duree estimee: ~{actual_count * 1.5 / 60:.0f} min")
+        st.metric("Cout estime", f"~${actual_count * serp_cost_per_keyword(serp_depth, serp_mode, serp_ai_overview):.2f}")
+        if serp_mode == "live":
+            st.caption(f"Duree estimee: ~{actual_count * 1.5 / 60:.0f} min")
+        else:
+            st.caption("Duree estimee: ~5 min en moyenne (jusqu'a 45 min)")
     
     if st.button("Analyser SERP", key="btn_serp", use_container_width=True):
         if len(df_to_scan) == 0:
@@ -1630,10 +1841,8 @@ with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
             if force_rescan:
                 keywords = df_to_scan['keyword'].tolist()
             else:
-                if 'client_pos' in df_to_scan.columns:
-                    keywords = df_to_scan[df_to_scan['client_pos'].isna()]['keyword'].tolist()
-                else:
-                    keywords = df_to_scan['keyword'].tolist()
+                keywords = df_to_scan[~serp_scanned_mask(df_to_scan)]['keyword'].tolist()
+            keywords = list(dict.fromkeys(keywords))
             
             if final_limit > 0:
                 keywords = keywords[:final_limit]
@@ -1641,51 +1850,86 @@ with st.expander("**Etape 9 - Analyse SERP et AI Overview**"):
             results = []
             progress = st.progress(0)
             status = st.empty()
-            
-            for i, kw in enumerate(keywords):
-                status.text(f"{i+1}/{len(keywords)} - {kw[:40]}...")
-                result = analyze_serp(
-                    kw,
+
+            if not keywords:
+                st.info("✅ Tous les keywords ont deja une SERP. Cocher 'Force rescan' pour les rescanner.")
+            elif serp_mode == "live":
+                for i, kw in enumerate(keywords):
+                    status.text(f"{i+1}/{len(keywords)} - {kw[:40]}...")
+                    result = analyze_serp(
+                        kw,
+                        st.session_state.dataforseo_login,
+                        st.session_state.dataforseo_password,
+                        st.session_state.location_code,
+                        st.session_state.language_code,
+                        st.session_state.client_domains,
+                        st.session_state.competitors,
+                        depth=serp_depth,
+                        ai_overview=serp_ai_overview
+                    )
+                    results.append(result)
+                    progress.progress((i + 1) / len(keywords))
+            else:
+                pending_tasks = st.session_state.setdefault('serp_pending_tasks', {})
+
+                def _report(done, total):
+                    status.text(f"File d'attente DataForSEO: {done}/{total} SERP recuperees...")
+                    progress.progress(done / total if total else 1.0)
+
+                results = analyze_serp_standard(
+                    keywords,
                     st.session_state.dataforseo_login,
                     st.session_state.dataforseo_password,
                     st.session_state.location_code,
                     st.session_state.language_code,
                     st.session_state.client_domains,
-                    st.session_state.competitors
+                    st.session_state.competitors,
+                    depth=serp_depth,
+                    ai_overview=serp_ai_overview,
+                    pending_tasks=pending_tasks,
+                    on_progress=_report
                 )
-                results.append(result)
-                progress.progress((i + 1) / len(keywords))
-                time.sleep(1)
-            
+
             progress.empty()
             status.empty()
+
+            if results:
+                df_serp = pd.DataFrame(results)
+                scanned = df_serp[df_serp['serp_scanned']].drop_duplicates(subset='keyword').set_index('keyword')
+                df_master = st.session_state.df_master
+                mask = df_master['keyword'].isin(scanned.index)
+                for col in scanned.columns:
+                    if col not in df_master.columns:
+                        df_master[col] = None
+                    if df_master[col].dtype != object:
+                        df_master[col] = df_master[col].astype(object)
+                    df_master.loc[mask, col] = df_master.loc[mask, 'keyword'].map(scanned[col])
+                st.session_state.df_master = df_master
+
+                # Stats
+                client_ranked = scanned['client_pos'].notna().sum()
+                ai_count = (scanned['has_ai_overview'] == True).sum()
+                failed = len(df_serp) - len(scanned)
+
+                st.success(f"SERP termine - Client ranke: {client_ranked}/{len(scanned)} | AI Overview: {ai_count}")
+                if failed:
+                    pending_left = len(st.session_state.get('serp_pending_tasks', {}))
+                    st.warning(f"{failed} mots-cles non recuperes"
+                               + (f" ({pending_left} taches encore en file: relancer pour les recuperer sans repayer)" if pending_left else ""))
             
-            df_serp = pd.DataFrame(results)
-            serp_cols = [c for c in df_serp.columns if c != 'keyword']
-            for col in serp_cols:
-                st.session_state.df_master[col] = st.session_state.df_master['keyword'].map(
-                    df_serp.set_index('keyword')[col].to_dict()
-                )
+                # Aperçu résultats
+                st.markdown("**Apercu positions:**")
+                cols_to_show = ['keyword', 'client_pos'] + [f'{c}_pos' for c in st.session_state.competitors if f'{c}_pos' in df_serp.columns]
+                st.dataframe(df_serp[cols_to_show].head(10), use_container_width=True, hide_index=True)
             
-            # Stats
-            client_ranked = df_serp['client_pos'].notna().sum()
-            ai_count = (df_serp['has_ai_overview'] == True).sum()
-            
-            st.success(f"SERP termine - Client ranke: {client_ranked}/{len(keywords)} | AI Overview: {ai_count}")
-            
-            # Aperçu résultats
-            st.markdown("**Apercu positions:**")
-            cols_to_show = ['keyword', 'client_pos'] + [f'{c}_pos' for c in st.session_state.competitors if f'{c}_pos' in df_serp.columns]
-            st.dataframe(df_serp[cols_to_show].head(10), use_container_width=True, hide_index=True)
-            
-            # Stats concurrents
-            st.markdown("**Resume positions:**")
-            stats = {'Client': client_ranked}
-            for c in st.session_state.competitors:
-                col = f'{c}_pos'
-                if col in df_serp.columns:
-                    stats[c] = df_serp[col].notna().sum()
-            st.dataframe(pd.DataFrame([stats]), use_container_width=True, hide_index=True)
+                # Stats concurrents
+                st.markdown("**Resume positions:**")
+                stats = {'Client': client_ranked}
+                for c in st.session_state.competitors:
+                    col = f'{c}_pos'
+                    if col in df_serp.columns:
+                        stats[c] = df_serp[col].notna().sum()
+                st.dataframe(pd.DataFrame([stats]), use_container_width=True, hide_index=True)
 
 # État actuel
 st.divider()
