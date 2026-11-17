@@ -1013,12 +1013,14 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
 
 
 def serp_scanned_mask(df):
+    # Anciens exports: un echec et un scan sans aucun domaine classe sont indiscernables,
+    # seule une position trouvee ou une AI Overview prouve un scan reussi.
+    legacy = pd.Series(False, index=df.index)
+    for col in df.columns:
+        if col.endswith('_pos'):
+            legacy |= df[col].notna()
     if 'has_ai_overview' in df.columns:
-        legacy = df['has_ai_overview'].notna()
-    elif 'client_pos' in df.columns:
-        legacy = df['client_pos'].notna()
-    else:
-        legacy = pd.Series(False, index=df.index)
+        legacy |= df['has_ai_overview'].eq(True)
     if 'serp_scanned' not in df.columns:
         return legacy
     flag = df['serp_scanned']
