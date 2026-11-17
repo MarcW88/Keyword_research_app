@@ -421,8 +421,8 @@ def extract_keywords_from_site(domain, login, password, location_code, language_
                 continue
             rows.append({
                 'keyword': keyword_data['keyword'],
-                'volume': info.get('search_volume') or 0 if info else None,
-                'cpc': info.get('cpc') or 0.0 if info else None,
+                'volume': info.get('search_volume'),
+                'cpc': info.get('cpc'),
             })
         return rows
     except Exception:
