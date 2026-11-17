@@ -310,15 +310,15 @@ def labs_cost(items_per_task, tasks=1):
     return tasks * (PRICE_LABS_TASK + items_per_task * PRICE_LABS_ITEM)
 
 
-def _cache_path(cache_key, payload):
-    digest = hashlib.sha256(json.dumps([cache_key, payload], sort_keys=True).encode()).hexdigest()
+def _cache_path(cache_key, payload, account):
+    digest = hashlib.sha256(json.dumps([account, cache_key, payload], sort_keys=True).encode()).hexdigest()
     return DFS_CACHE_DIR / f"{digest}.json"
 
 
-def cache_get(cache_key, payload):
+def cache_get(cache_key, payload, account):
     if not st.session_state.get("use_api_cache", True):
         return None
-    path = _cache_path(cache_key, payload)
+    path = _cache_path(cache_key, payload, account)
     ttl_days = DFS_CACHE_TTL_DAYS["serp" if cache_key.startswith("serp/") else "default"]
     if not path.exists() or time.time() - path.stat().st_mtime > ttl_days * 86400:
         return None
@@ -328,10 +328,10 @@ def cache_get(cache_key, payload):
         return None
 
 
-def cache_set(cache_key, payload, data):
+def cache_set(cache_key, payload, data, account):
     try:
         DFS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        _cache_path(cache_key, payload).write_text(json.dumps(data))
+        _cache_path(cache_key, payload, account).write_text(json.dumps(data))
     except OSError:
         pass
 
@@ -344,14 +344,14 @@ def _task_ok(data):
 def dfs_post(endpoint, payload, login, password, timeout, cache_key=None):
     """POST d'une tache DataForSEO, avec cache disque des reponses reussies (evite de repayer)."""
     cache_key = cache_key or endpoint
-    cached = cache_get(cache_key, payload)
+    cached = cache_get(cache_key, payload, login)
     if cached is not None:
         return cached
     r = requests.post(DFS_BASE_URL + endpoint, headers=get_auth_header(login, password),
                       json=[payload], timeout=timeout)
     data = r.json()
     if _task_ok(data):
-        cache_set(cache_key, payload, data)
+        cache_set(cache_key, payload, data, login)
     return data
 
 
@@ -964,7 +964,7 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
 
     to_post = []
     for kw, payload in payloads.items():
-        cached = cache_get(SERP_CACHE_KEY, payload)
+        cached = cache_get(SERP_CACHE_KEY, payload, login)
         if cached is not None:
             results[kw] = parse_serp_response(kw, cached, client_domains, competitors)
         elif (kw, json.dumps(payload, sort_keys=True)) not in already_pending:
@@ -1003,7 +1003,7 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
             task = (data.get('tasks') or [{}])[0]
             status_code = task.get('status_code')
             if status_code == 20000:
-                cache_set(SERP_CACHE_KEY, payload, data)
+                cache_set(SERP_CACHE_KEY, payload, data, login)
                 results[kw] = parse_serp_response(kw, data, client_domains, competitors)
                 del pending_tasks[task_id]
             elif status_code not in (40601, 40602):
