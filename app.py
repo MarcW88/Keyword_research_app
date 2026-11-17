@@ -1017,7 +1017,7 @@ def serp_scanned_mask(df):
     # seule une position trouvee ou une AI Overview prouve un scan reussi.
     legacy = pd.Series(False, index=df.index)
     for col in df.columns:
-        if col.endswith('_pos'):
+        if isinstance(col, str) and col.endswith('_pos'):
             legacy |= df[col].notna()
     if 'has_ai_overview' in df.columns:
         legacy |= df['has_ai_overview'].eq(True)
