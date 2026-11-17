@@ -9,6 +9,7 @@ import base64
 import time
 import re
 import hashlib
+import threading
 from io import BytesIO
 from pathlib import Path
 import anthropic
@@ -299,6 +300,9 @@ PRICE_GOOGLE_ADS_TASK_LIVE = 0.09  # par tache (search_volume: jusqu'a 1000 mots
 PRICE_LABS_TASK = 0.012
 PRICE_LABS_ITEM = 0.00012
 SEARCH_VOLUME_BATCH_SIZE = 1000
+GOOGLE_ADS_MAX_PER_MINUTE = 12
+DFS_RATE_LIMIT_CODES = (40202, 50301)
+DFS_RATE_LIMIT_RETRIES = 2
 
 
 def serp_cost_per_keyword(depth, mode, ai_overview):
@@ -341,15 +345,49 @@ def _task_ok(data):
     return data.get("status_code") == 20000 and bool(tasks) and tasks[0].get("status_code") == 20000
 
 
+def _rate_limit_status(data):
+    tasks = data.get("tasks") or [{}]
+    codes = {data.get("status_code"), (tasks[0] or {}).get("status_code")}
+    return next((c for c in codes if c in DFS_RATE_LIMIT_CODES), None)
+
+
+@st.cache_resource
+def _google_ads_call_log():
+    return {"lock": threading.Lock(), "calls": {}}
+
+
+def _wait_google_ads_slot(login):
+    """Google Ads (DataForSEO) accepte 12 requetes/minute par compte: on espace les appels,
+    tous onglets/sessions confondus."""
+    log = _google_ads_call_log()
+    with log["lock"]:
+        now = time.time()
+        recent = [t for t in log["calls"].get(login, []) if now - t < 60]
+        slot = now
+        if len(recent) >= GOOGLE_ADS_MAX_PER_MINUTE:
+            slot = recent[-GOOGLE_ADS_MAX_PER_MINUTE] + 61
+        log["calls"][login] = recent + [slot]
+    if slot > now:
+        time.sleep(slot - now)
+
+
 def dfs_post(endpoint, payload, login, password, timeout, cache_key=None):
     """POST d'une tache DataForSEO, avec cache disque des reponses reussies (evite de repayer)."""
     cache_key = cache_key or endpoint
     cached = cache_get(cache_key, payload, login)
     if cached is not None:
         return cached
-    r = requests.post(DFS_BASE_URL + endpoint, headers=get_auth_header(login, password),
-                      json=[payload], timeout=timeout)
-    data = r.json()
+    is_google_ads = endpoint.startswith("keywords_data/google_ads/")
+    for attempt in range(DFS_RATE_LIMIT_RETRIES + 1):
+        if is_google_ads:
+            _wait_google_ads_slot(login)
+        r = requests.post(DFS_BASE_URL + endpoint, headers=get_auth_header(login, password),
+                          json=[payload], timeout=timeout)
+        data = r.json()
+        code = _rate_limit_status(data)
+        if code is None or attempt == DFS_RATE_LIMIT_RETRIES:
+            break
+        time.sleep(61 if code == 40202 else 10)
     if _task_ok(data):
         cache_set(cache_key, payload, data, login)
     return data
