@@ -954,20 +954,20 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
                           depth, ai_overview, pending_tasks, on_progress=None, max_wait_s=2700):
     """Analyse SERP en mode Standard (file d'attente): task_post par lots de 100, puis task_get.
 
-    pending_tasks (task_id -> keyword) est mis a jour en place: les taches deja payees mais pas
+    pending_tasks (task_id -> (keyword, payload)) est mis a jour en place: les taches deja payees mais pas
     encore recuperees sont reutilisees au lieu d'etre reposees.
     """
     headers = get_auth_header(login, password)
     payloads = {kw: _serp_payload(kw, location_code, language_code, depth, ai_overview) for kw in keywords}
     results = {}
-    already_pending = set(pending_tasks.values())
+    already_pending = {(kw, json.dumps(payload, sort_keys=True)) for kw, payload in pending_tasks.values()}
 
     to_post = []
     for kw, payload in payloads.items():
         cached = cache_get(SERP_CACHE_KEY, payload)
         if cached is not None:
             results[kw] = parse_serp_response(kw, cached, client_domains, competitors)
-        elif kw not in already_pending:
+        elif (kw, json.dumps(payload, sort_keys=True)) not in already_pending:
             to_post.append(kw)
 
     for i in range(0, len(to_post), 100):
@@ -979,18 +979,21 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
             for task in r.json().get('tasks') or []:
                 tag = (task.get('data') or {}).get('tag')
                 if task.get('status_code') == 20100 and tag is not None and tag.isdigit():
-                    pending_tasks[task['id']] = chunk[int(tag)]
+                    kw = chunk[int(tag)]
+                    pending_tasks[task['id']] = (kw, payloads[kw])
         except (requests.RequestException, ValueError):
             pass
 
-    wanted = set(keywords)
+    def _is_wanted(kw, payload):
+        return payloads.get(kw) == payload and kw not in results
+
     start = time.time()
-    while any(kw in wanted for kw in pending_tasks.values()) and time.time() - start < max_wait_s:
+    while any(_is_wanted(kw, p) for kw, p in pending_tasks.values()) and time.time() - start < max_wait_s:
         if on_progress:
             on_progress(len(results), len(keywords))
         time.sleep(15)
-        for task_id, kw in list(pending_tasks.items()):
-            if kw not in wanted:
+        for task_id, (kw, payload) in list(pending_tasks.items()):
+            if not _is_wanted(kw, payload):
                 continue
             try:
                 data = requests.get(DFS_BASE_URL + f"serp/google/organic/task_get/advanced/{task_id}",
@@ -1000,7 +1003,7 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
             task = (data.get('tasks') or [{}])[0]
             status_code = task.get('status_code')
             if status_code == 20000:
-                cache_set(SERP_CACHE_KEY, payloads.get(kw) or _serp_payload(kw, location_code, language_code, depth, ai_overview), data)
+                cache_set(SERP_CACHE_KEY, payload, data)
                 results[kw] = parse_serp_response(kw, data, client_domains, competitors)
                 del pending_tasks[task_id]
             elif status_code not in (40601, 40602):
@@ -1010,13 +1013,16 @@ def analyze_serp_standard(keywords, login, password, location_code, language_cod
 
 
 def serp_scanned_mask(df):
-    if 'serp_scanned' in df.columns:
-        return df['serp_scanned'].eq(True)
     if 'has_ai_overview' in df.columns:
-        return df['has_ai_overview'].notna()
-    if 'client_pos' in df.columns:
-        return df['client_pos'].notna()
-    return pd.Series(False, index=df.index)
+        legacy = df['has_ai_overview'].notna()
+    elif 'client_pos' in df.columns:
+        legacy = df['client_pos'].notna()
+    else:
+        legacy = pd.Series(False, index=df.index)
+    if 'serp_scanned' not in df.columns:
+        return legacy
+    flag = df['serp_scanned']
+    return flag.eq(True) | (flag.isna() & legacy)
 
 
 # =============================================================================
